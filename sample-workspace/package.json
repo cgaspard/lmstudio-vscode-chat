@@ -1,0 +1,9 @@
+{
+  "name": "sample-workspace",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A small Node.js playground for trying the LM Studio Code agent.",
+  "scripts": {
+    "start": "node app.js"
+  }
+}

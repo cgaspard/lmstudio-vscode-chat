@@ -3,12 +3,22 @@ import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { getConfig } from '../config';
 import { ServerRegistry } from '../connection';
+import { clampContext } from '../core/context';
+import { humanizeError, isConnectionError } from '../core/errors';
+import { pickModel } from '../core/models';
+import { ConnectResult, SelfHealer } from '../core/reconnect';
+import { deriveTitle } from '../core/title';
 import { LMStudioClient } from '../lmstudio/client';
 import { log, logError } from '../logger';
 import { OpencodeClient } from '../opencode/client';
 import { OpencodeEvent, PromptBody } from '../opencode/protocol';
-import { OpencodeServerManager } from '../opencode/serverManager';
+import { Disposable, OpencodeServerManager } from '../opencode/serverManager';
 import { HostToWebview, UiImage, UiModel, UiSession, WebviewToHost } from '../shared';
+
+/** How often the health poll runs (ms). */
+const HEALTH_INTERVAL_MS = 5000;
+/** Refresh the model list every N health ticks while connected. */
+const REFRESH_EVERY_TICKS = 3;
 
 export interface BridgeDeps {
   context: vscode.ExtensionContext;
@@ -29,25 +39,127 @@ export class ChatBridge {
   private eventAbort: AbortController | undefined;
   private disposed = false;
   private connected = false;
+  private connecting = false;
   private currentTitle = '';
   private agentsWarned = false;
   private activeFile: { abs: string; rel: string; chars: number } | null = null;
   private editorSub: vscode.Disposable | undefined;
+  private messageSub: vscode.Disposable | undefined;
+  private healthTimer: ReturnType<typeof setInterval> | undefined;
   private titleSink: ((t: string) => void) | undefined;
+  private lastModels: UiModel[] = [];
+  private serverExitSub: Disposable | undefined;
+  /** Pure self-heal policy (reconnect timing, backoff, reload-after-reconnect). */
+  private readonly healer: SelfHealer = new SelfHealer(
+    {
+      upstreamReachable: () => this.deps.lmStudio.checkConnection(),
+      serverHealthy: () => this.deps.server.isRunning && !!this.client,
+      isConnected: () => this.connected,
+      goOffline: () => this.markOffline(),
+      connect: () => this.init(),
+      reloadModels: () => this.refreshModelsToWebview(),
+    },
+    { refreshEvery: REFRESH_EVERY_TICKS, backoff: { base: 2000, max: 30000 } },
+  );
 
   constructor(
     private readonly webview: vscode.Webview,
     private readonly deps: BridgeDeps,
   ) {
     this.agent = getConfig().agent;
-    webview.onDidReceiveMessage((m: WebviewToHost) => this.onMessage(m));
+    // Keep the subscription so dispose() can detach it — a re-resolved view
+    // would otherwise leave a second handler alive, fanning one send out to
+    // multiple prompt requests (duplicate replies).
+    this.messageSub = webview.onDidReceiveMessage((m: WebviewToHost) => this.onMessage(m));
     this.editorSub = vscode.window.onDidChangeActiveTextEditor((e) => this.updateActiveFile(e));
+    // Self-heal when the shared OpenCode server dies unexpectedly.
+    this.serverExitSub = this.deps.server.addExitListener(() => this.onServerExit());
   }
 
   dispose(): void {
     this.disposed = true;
+    this.messageSub?.dispose();
     this.eventAbort?.abort();
     this.editorSub?.dispose();
+    this.serverExitSub?.dispose();
+    if (this.healthTimer) {
+      clearInterval(this.healthTimer);
+      this.healthTimer = undefined;
+    }
+  }
+
+  /**
+   * Poll so the panel self-heals. The policy (when to reconnect, how to back
+   * off, when to reload models) lives in the pure, unit-tested `SelfHealer`;
+   * this shell just drives it on a timer.
+   */
+  private startHealthPoll(): void {
+    if (this.healthTimer || this.disposed) {
+      return;
+    }
+    this.healthTimer = setInterval(() => void this.runHealthTick(), HEALTH_INTERVAL_MS);
+  }
+
+  private async runHealthTick(): Promise<void> {
+    if (this.disposed || this.connecting) {
+      return;
+    }
+    await this.healer.tick();
+  }
+
+  /** LM Studio went away — keep the live OpenCode server, just show the banner. */
+  private markOffline(): void {
+    this.connected = false;
+    this.postServers(false);
+    this.post({
+      type: 'status',
+      text: 'Lost connection to LM Studio — reconnecting…',
+      kind: 'warn',
+    });
+  }
+
+  /** The shared OpenCode server crashed: drop our stale client + stream, reconnect. */
+  private onServerExit(): void {
+    if (this.disposed) {
+      return;
+    }
+    log('opencode server exited unexpectedly — reconnecting');
+    this.teardownConnection(false); // server is already gone
+    this.healer.allowImmediate(); // permit an immediate reconnect
+    this.post({ type: 'status', text: 'Reconnecting…', kind: 'warn' });
+    void this.healer.reconnect(); // reconnects + reloads models on success
+  }
+
+  /**
+   * Abort the event stream and drop the client so a fresh connect re-subscribes
+   * cleanly. Only dispose the *shared* server when asked (and when it is ours to
+   * dispose) — other panels may still be using it.
+   */
+  private teardownConnection(disposeServer: boolean): void {
+    this.eventAbort?.abort();
+    this.eventAbort = undefined;
+    this.client = undefined;
+    if (disposeServer) {
+      this.deps.server.dispose();
+    }
+  }
+
+  /** True when LM Studio is reachable and we have a live OpenCode client. */
+  private isLive(): boolean {
+    return this.connected && !!this.client && this.deps.server.isRunning;
+  }
+
+  /**
+   * Re-establish the connection after a transient failure. If the OpenCode
+   * process is gone we fully re-init (which respawns it); otherwise we just
+   * re-verify LM Studio and reuse the running server. The healer reloads models
+   * on success. Returns whether we are live afterwards.
+   */
+  private async reconnect(): Promise<boolean> {
+    if (!this.deps.server.isRunning) {
+      this.teardownConnection(false);
+    }
+    return this.healer.reconnect();
   }
 
   private updateActiveFile(editor: vscode.TextEditor | undefined): void {
@@ -93,6 +205,9 @@ export class ChatBridge {
   }
 
   private async onMessage(msg: WebviewToHost): Promise<void> {
+    if (this.disposed) {
+      return; // a superseded bridge must not handle messages
+    }
     try {
       switch (msg.type) {
         case 'ready':
@@ -110,6 +225,9 @@ export class ChatBridge {
           break;
         case 'unloadModel':
           await this.handleUnloadModel(msg.modelID);
+          break;
+        case 'setContextSize':
+          await this.setContextSize(msg.tokens);
           break;
         case 'refreshModels':
           await this.refreshModelsToWebview();
@@ -184,12 +302,25 @@ export class ChatBridge {
       }
     } catch (err) {
       logError(`handling ${msg.type}`, err);
-      this.post({ type: 'error', message: err instanceof Error ? err.message : String(err) });
+      this.post({ type: 'error', message: humanizeError(err, { subject: 'LM Studio' }) });
       this.post({ type: 'busy', busy: false });
     }
   }
 
-  private async init(): Promise<void> {
+  private async init(): Promise<ConnectResult> {
+    this.startHealthPoll();
+    if (this.connecting) {
+      return this.isLive() ? 'connected' : 'upstream-down';
+    }
+    this.connecting = true;
+    try {
+      return await this.doInit();
+    } finally {
+      this.connecting = false;
+    }
+  }
+
+  private async doInit(): Promise<ConnectResult> {
     const cfg = getConfig();
     const active = this.deps.servers.active();
     this.deps.lmStudio.setBaseUrl(active.url);
@@ -199,7 +330,9 @@ export class ChatBridge {
     this.connected = await this.deps.lmStudio.checkConnection();
     this.postServers(this.connected);
 
-    // Offline: show the connection screen and wait for retry / switch.
+    // Offline: show the connection screen and wait for retry / switch. The
+    // healer applies no backoff for this — the poll recovers the moment LM
+    // Studio is reachable again.
     if (!this.connected) {
       this.post({
         type: 'init',
@@ -212,7 +345,7 @@ export class ChatBridge {
         minContext: cfg.minContextLength,
       });
       this.post({ type: 'status', text: `Can't reach LM Studio at ${active.url}`, kind: 'warn' });
-      return;
+      return 'upstream-down';
     }
 
     this.post({ type: 'status', text: 'Starting OpenCode server…' });
@@ -220,8 +353,10 @@ export class ChatBridge {
     try {
       started = await this.deps.server.start();
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      this.post({ type: 'error', message });
+      // Upstream is fine but OpenCode failed to come up — report 'failed' so the
+      // healer backs off instead of respawning a broken server every tick.
+      logError('opencode server failed to start', err);
+      this.post({ type: 'error', message: humanizeError(err, { subject: 'OpenCode' }) });
       this.post({
         type: 'init',
         models: [],
@@ -232,7 +367,7 @@ export class ChatBridge {
         lmStudioConnected: true,
         minContext: cfg.minContextLength,
       });
-      return;
+      return 'failed';
     }
     this.client = started.client;
 
@@ -260,7 +395,10 @@ export class ChatBridge {
     }
     this.updateActiveFile(vscode.window.activeTextEditor);
     this.warnIfAgentsLarge();
+    // Clean connect — clear any reconnect backoff held by the healer.
+    this.healer.noteConnected();
     this.post({ type: 'status', text: '' });
+    return 'connected';
   }
 
   /** Warn once if AGENTS.md/CLAUDE.md (auto-loaded by OpenCode) is large. */
@@ -313,11 +451,9 @@ export class ChatBridge {
   /** Switch the active LM Studio server: tear down OpenCode and re-initialize. */
   private async switchServer(id: string): Promise<void> {
     await this.deps.servers.setActive(id);
-    this.eventAbort?.abort();
-    this.eventAbort = undefined;
-    this.client = undefined;
     this.currentSessionID = null;
-    this.deps.server.dispose();
+    this.healer.allowImmediate(); // a deliberate switch shouldn't wait on backoff
+    this.teardownConnection(true);
     this.post({ type: 'cleared' });
     await this.init();
   }
@@ -345,6 +481,29 @@ export class ChatBridge {
     await this.refreshModelsToWebview();
   }
 
+  /** Persist a new context window and restart OpenCode so it takes effect. */
+  private async setContextSize(tokens: number): Promise<void> {
+    // Never persist more context than the selected model actually supports.
+    const model = this.lastModels.find((m) => m.id === this.currentModel);
+    const clamped = clampContext(tokens, model?.maxContextLength);
+    try {
+      await vscode.workspace
+        .getConfiguration('lmstudioCode')
+        .update('minContextLength', clamped, vscode.ConfigurationTarget.Global);
+    } catch (err) {
+      logError('update minContextLength', err);
+    }
+    this.post({
+      type: 'status',
+      text: `Setting context to ${Math.round(clamped / 1024)}K — restarting…`,
+    });
+    // Restart the OpenCode server so num_ctx / limit.context rebuild; keep the
+    // current session (sessions persist on disk).
+    this.teardownConnection(true);
+    await this.init();
+    this.post({ type: 'status', text: '' });
+  }
+
   private async handleUnloadModel(modelID: string): Promise<void> {
     this.post({ type: 'status', text: `Unloading ${modelID}…` });
     try {
@@ -358,7 +517,7 @@ export class ChatBridge {
 
   private async loadModels(): Promise<UiModel[]> {
     const list = await this.deps.lmStudio.listModels();
-    return list.map((m) => ({
+    this.lastModels = list.map((m) => ({
       id: m.id,
       name: m.displayName,
       loaded: m.state === 'loaded',
@@ -367,6 +526,7 @@ export class ChatBridge {
       toolUse: m.toolUse,
       vision: m.vision,
     }));
+    return this.lastModels;
   }
 
   private async newSession(announce = true): Promise<void> {
@@ -458,15 +618,19 @@ export class ChatBridge {
       this.post({ type: 'status', text: '' });
     }
 
+    // Identity: OpenCode's base prompt makes the model call itself "opencode".
+    // Our system text is appended, so this overrides the user-facing identity.
+    let system =
+      'You are "LM Studio Code", an agentic coding assistant running on the user\'s machine against their local LM Studio models. If asked your name or what you are, identify as "LM Studio Code". Never identify yourself as "opencode".';
+
     // Thinking control. Qwen-family models honor the `/no_think` soft switch
     // (consumed by the chat template); for others fall back to a system hint.
     let promptText = text;
-    let system: string | undefined;
     if (!thinking) {
       if (/qwen/i.test(this.currentModel)) {
         promptText = `${text}\n\n/no_think`;
       } else {
-        system = 'Answer directly and concisely. Do not produce private chain-of-thought or <think> reasoning blocks.';
+        system += '\n\nAnswer directly and concisely. Do not produce private chain-of-thought or <think> reasoning blocks.';
       }
     }
 
@@ -495,7 +659,7 @@ export class ChatBridge {
     }
 
     this.post({ type: 'busy', busy: true });
-    await this.client.promptAsync(this.currentSessionID!, {
+    await this.sendPrompt({
       model: { providerID: 'lmstudio', modelID: this.currentModel },
       agent: this.agent,
       ...(system ? { system } : {}),
@@ -514,6 +678,32 @@ export class ChatBridge {
         this.updateTitle(title);
         await this.sendSessions();
       }
+    }
+  }
+
+  /**
+   * Send a prompt with one transparent self-heal: if the request fails because
+   * the OpenCode server is unreachable, reconnect (respawning it if it died)
+   * and retry once before surfacing a friendly error.
+   */
+  private async sendPrompt(body: PromptBody): Promise<void> {
+    try {
+      await this.client!.promptAsync(this.currentSessionID!, body);
+    } catch (err) {
+      if (!isConnectionError(err)) {
+        throw err;
+      }
+      logError('prompt failed on a connection error — reconnecting and retrying', err);
+      this.post({ type: 'status', text: 'Reconnecting…', kind: 'warn' });
+      const live = await this.reconnect();
+      if (live && this.client && this.currentSessionID) {
+        await this.client.promptAsync(this.currentSessionID, body);
+        this.post({ type: 'status', text: '' });
+        return;
+      }
+      throw new Error(
+        'Lost connection to LM Studio. It looks offline — start it and try again; I’ll keep reconnecting in the background.',
+      );
     }
   }
 
@@ -554,32 +744,4 @@ function sessionIdOf(event: OpencodeEvent): string | undefined {
     p?.part?.sessionID ??
     undefined
   );
-}
-
-/** Derive a concise session title from the first user prompt. */
-function deriveTitle(text: string): string {
-  let t = text
-    .replace(/```[\s\S]*?```/g, ' ')
-    .replace(/`([^`]*)`/g, '$1')
-    .replace(/https?:\/\/\S+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-  if (!t) {
-    return '';
-  }
-  const firstSentence = t.split(/(?<=[.!?])\s|\n/)[0].trim() || t;
-  const words = firstSentence.split(' ').slice(0, 8).join(' ');
-  let title = words.length > 52 ? words.slice(0, 52).trim() + '…' : words;
-  title = title.replace(/[.,;:]+$/, '');
-  return title.charAt(0).toUpperCase() + title.slice(1);
-}
-
-function pickModel(preferences: string[], models: UiModel[]): string | undefined {
-  for (const pref of preferences) {
-    if (pref && models.some((m) => m.id === pref)) {
-      return pref;
-    }
-  }
-  const loaded = models.find((m) => m.loaded);
-  return loaded?.id ?? models[0]?.id;
 }

@@ -3,14 +3,20 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { ExtensionConfig } from '../config';
+import { ExtensionConfig, getConfig } from '../config';
+import { clampContext } from '../core/context';
 import { LMStudioClient } from '../lmstudio/client';
 import { log, logError } from '../logger';
 import { OpencodeClient } from './client';
+import { BUILD_PROMPT, PLAN_PROMPT } from './prompts';
 
 export interface ServerStartResult {
   baseUrl: string;
   client: OpencodeClient;
+}
+
+export interface Disposable {
+  dispose(): void;
 }
 
 /**
@@ -23,6 +29,9 @@ export class OpencodeServerManager {
   private baseUrl: string | undefined;
   private client: OpencodeClient | undefined;
   private starting: Promise<ServerStartResult> | undefined;
+  private readonly exitListeners = new Set<() => void>();
+  /** Procs we killed on purpose, so their `exit` doesn't trigger reconnects. */
+  private readonly killed = new WeakSet<ChildProcess>();
 
   constructor(
     private readonly cfg: ExtensionConfig,
@@ -31,6 +40,16 @@ export class OpencodeServerManager {
 
   get isRunning(): boolean {
     return !!this.proc && !this.proc.killed;
+  }
+
+  /**
+   * Register a callback fired whenever the server process exits unexpectedly.
+   * Multiple bridges (sidebar + secondary + editor tabs) share one manager, so
+   * each registers its own listener and disposes it on teardown.
+   */
+  addExitListener(cb: () => void): Disposable {
+    this.exitListeners.add(cb);
+    return { dispose: () => this.exitListeners.delete(cb) };
   }
 
   /** Start (or return the in-flight start of) the server. Idempotent. */
@@ -84,10 +103,25 @@ export class OpencodeServerManager {
     this.client = client;
 
     proc.on('exit', (code, signal) => {
-      log(`opencode server exited (code=${code}, signal=${signal})`);
-      this.proc = undefined;
-      this.baseUrl = undefined;
-      this.client = undefined;
+      const intentional = this.killed.has(proc);
+      log(`opencode server exited (code=${code}, signal=${signal}${intentional ? ', intentional' : ''})`);
+      this.killed.delete(proc);
+      if (this.proc === proc) {
+        this.proc = undefined;
+        this.baseUrl = undefined;
+        this.client = undefined;
+      }
+      // Only notify on an *unexpected* exit so bridges can self-heal; a dispose
+      // / restart we triggered ourselves must not kick a reconnect storm.
+      if (!intentional) {
+        for (const cb of [...this.exitListeners]) {
+          try {
+            cb();
+          } catch (err) {
+            logError('exit listener threw', err);
+          }
+        }
+      }
     });
 
     return { baseUrl, client };
@@ -164,13 +198,15 @@ export class OpencodeServerManager {
   /** Build the OPENCODE_CONFIG_CONTENT JSON injecting the LM Studio provider. */
   private async buildConfigContent(): Promise<string> {
     const models: Record<string, Record<string, unknown>> = {};
-    const ctx = this.cfg.minContextLength;
+    const ctx = getConfig().minContextLength; // read fresh so context-size changes apply on restart
     try {
       const list = await this.lmStudio.listModels();
       for (const m of list) {
         // OpenCode drops image attachments unless the model is declared with
         // attachment + image modality. Align the context limit with the window
-        // we ensure-load so OpenCode compacts before LM Studio overflows.
+        // we ensure-load so OpenCode compacts before LM Studio overflows — but
+        // never declare more context than the model actually supports.
+        const perModel = clampContext(ctx, m.maxContextLength);
         models[m.id] = {
           name: m.displayName,
           attachment: !!m.vision,
@@ -180,14 +216,20 @@ export class OpencodeServerManager {
             input: m.vision ? ['text', 'image'] : ['text'],
             output: ['text'],
           },
-          limit: { context: ctx, output: Math.min(8192, Math.floor(ctx / 2)) },
+          limit: { context: perModel, output: Math.min(8192, Math.floor(perModel / 2)) },
         };
       }
     } catch (err) {
       logError('could not enumerate LM Studio models for config', err);
     }
+    // Override the build/plan agent prompts so the model identifies as
+    // "LM Studio Code" instead of OpenCode's built-in "You are opencode…".
     const config = {
       $schema: 'https://opencode.ai/config.json',
+      agent: {
+        build: { prompt: BUILD_PROMPT },
+        plan: { prompt: PLAN_PROMPT },
+      },
       provider: {
         lmstudio: {
           npm: '@ai-sdk/openai-compatible',
@@ -239,6 +281,7 @@ export class OpencodeServerManager {
   dispose(): void {
     if (this.proc && !this.proc.killed) {
       log('stopping opencode server');
+      this.killed.add(this.proc); // mark intentional so exit doesn't trigger reconnect
       this.proc.kill();
     }
     this.proc = undefined;

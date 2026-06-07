@@ -1,5 +1,9 @@
 import * as vscode from 'vscode';
 
+// Re-exported from the pure core module so existing importers keep working
+// while the implementation stays unit-testable without vscode.
+export { lmStudioRestRoot } from './core/url';
+
 export interface ExtensionConfig {
   lmStudioBaseUrl: string;
   opencodePath: string;
@@ -28,9 +32,4 @@ export function getConfig(): ExtensionConfig {
     minContextLength: cfg.get<number>('minContextLength') ?? 32768,
     gpuOffload: (cfg.get<string>('gpuOffload') ?? 'max').trim(),
   };
-}
-
-/** The OpenAI-compatible base URL without a trailing /v1 (LM Studio REST root). */
-export function lmStudioRestRoot(baseUrl: string): string {
-  return baseUrl.replace(/\/v\d+$/, '');
 }

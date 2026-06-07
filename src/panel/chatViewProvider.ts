@@ -58,11 +58,17 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       localResourceRoots: [this.extensionUri],
     };
     view.webview.html = getHtml(view.webview, this.extensionUri);
-    this.bridge = new ChatBridge(view.webview, this.deps);
-    this.bridge.setTitleSink((t) => {
+    // A view can be re-resolved (moved between sidebars, hide/show, layout
+    // changes). Dispose any prior bridge first so we never leave a second
+    // onDidReceiveMessage handler attached — otherwise one "send" fans out to
+    // multiple prompt requests (duplicate replies).
+    this.bridge?.dispose();
+    const bridge = new ChatBridge(view.webview, this.deps);
+    this.bridge = bridge;
+    bridge.setTitleSink((t) => {
       view.title = t;
     });
-    view.onDidDispose(() => this.bridge?.dispose());
+    view.onDidDispose(() => bridge.dispose()); // capture THIS bridge, not this.bridge
   }
 
   newChat(): void {

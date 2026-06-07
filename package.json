@@ -2,7 +2,7 @@
   "name": "lmstudio-code",
   "displayName": "LM Studio Code",
   "description": "Agentic coding panel for your local LM Studio models. A Claude Code / Codex–style chat experience powered by the open-source OpenCode agent, running entirely against your local models.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "cgaspard",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -174,9 +174,12 @@
     "vscode:prepublish": "npm run package",
     "compile": "npm run check-types && node esbuild.js",
     "check-types": "tsc --noEmit",
+    "check-types:test": "tsc -p tsconfig.test.json",
     "watch": "node esbuild.js --watch",
     "package": "npm run check-types && node esbuild.js --production",
-    "package:vsix": "vsce package"
+    "package:vsix": "vsce package",
+    "test": "npm run check-types:test && node esbuild.test.js && node --test \"out-test/**/*.test.js\"",
+    "test:watch": "node esbuild.test.js && node --test --watch \"out-test/**/*.test.js\""
   },
   "dependencies": {
     "marked": "^12.0.0"

@@ -1,0 +1,18 @@
+version: 0.2.0
+date: 2026-06-07
+highlights:
+  - Self-healing connection — the panel now recovers on its own when LM Studio or the embedded OpenCode server drops or restarts. You get a friendly "reconnecting…" status (no more cryptic "fetch failed"), an automatic reconnect, and a one-time retry of the in-flight message.
+  - Pick your context window from the composer — presets from 8K up to each model's real maximum, applied live without leaving the chat.
+added:
+  - Context window picker in the model menu — choose 8K / 16K / 32K / 64K / 128K / … capped at each model's actual maximum; the choice persists and the OpenCode server rebuilds to use it.
+  - Reliability unit-test suite (`npm test`) covering connection-error classification, the reconnect/backoff policy, context clamping, model selection, title derivation, and URL handling.
+  - The assistant now identifies as "LM Studio Code" instead of "opencode" — the OpenCode build/plan agent prompts are overridden, with tool use unaffected.
+changed:
+  - Health monitoring auto-reconnects when LM Studio comes back or the OpenCode server is restarted, refreshes the model list on a cadence, and reloads models immediately after any reconnect.
+  - Context sizes display in 1024-base (32768 now reads as "32K", not "33K"), and the context meter tracks the selected model's window.
+  - Connection errors are humanized and de-duplicated, so a dropped connection shows one clear message instead of stacked "fetch failed" bubbles.
+fixed:
+  - Duplicate assistant replies — moving the panel between side bars (or hide/show) could leave extra message handlers attached, so one prompt produced several answers. A re-resolved view now disposes the prior bridge.
+  - The selected context window is clamped per-model end to end, so you can never request more context than a model actually supports.
+  - Models reappear on their own shortly after LM Studio is started following a cold start.
+removed: []

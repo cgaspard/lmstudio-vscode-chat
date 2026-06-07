@@ -1,0 +1,11 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "run app",
+      "type": "shell",
+      "command": "node app.js",
+      "problemMatcher": []
+    }
+  ]
+}

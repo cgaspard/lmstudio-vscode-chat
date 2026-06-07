@@ -1,4 +1,9 @@
 import * as vscode from 'vscode';
+import { normalizeServerUrl } from './core/url';
+
+// Re-exported so existing importers keep the same entry point; the
+// implementation lives in the pure core module for unit testing.
+export { normalizeServerUrl };
 
 export interface LmServer {
   id: string;
@@ -9,20 +14,6 @@ export interface LmServer {
 let counter = 0;
 function genId(): string {
   return 'srv_' + Date.now().toString(36) + (counter++).toString(36);
-}
-
-export function normalizeServerUrl(raw: string): string {
-  let u = (raw || '').trim().replace(/\/+$/, '');
-  if (!u) {
-    return 'http://127.0.0.1:1234/v1';
-  }
-  if (!/^https?:\/\//i.test(u)) {
-    u = 'http://' + u;
-  }
-  if (!/\/v\d+$/.test(u)) {
-    u = u + '/v1';
-  }
-  return u;
 }
 
 const SERVERS_KEY = 'lmstudioCode.servers';

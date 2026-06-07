@@ -1,4 +1,6 @@
 import { marked } from 'marked';
+import { computeWindow, contextPresets, formatTokens } from '../core/context';
+import { humanizeError } from '../core/errors';
 import type { MessageWithParts, OpencodeEvent, Part } from '../opencode/protocol';
 import type { HostToWebview, UiImage, UiModel, UiServer, UiSession, WebviewToHost } from '../shared';
 
@@ -64,6 +66,7 @@ const partState = new Map<string, { el: HTMLElement; buffer: string; type: strin
 const roleByMessage = new Map<string, string>();
 const permissionEls = new Map<string, HTMLElement>();
 const toolCollapsed = new Map<string, boolean>(); // partID -> collapsed?
+let lastErrorText = ''; // dedup repeated error bubbles within a turn
 
 // ---------------------------------------------------------------------------
 // Icons
@@ -174,6 +177,10 @@ function build(): void {
         <button id="model-refresh" class="icon-btn" title="Rescan models">${icon.refresh}</button>
       </div>
       <div id="model-menu-list" class="model-menu-list"></div>
+      <div class="model-menu-foot">
+        <span class="ctx-foot-label">Context window</span>
+        <div id="ctx-presets" class="ctx-presets"></div>
+      </div>
     </div>
     <div id="server-menu" class="model-menu hidden">
       <div class="model-menu-head"><span>LM Studio servers</span></div>
@@ -535,6 +542,36 @@ function renderModelMenu(): void {
     });
     modelMenuList.appendChild(row);
   }
+  renderCtxPresets();
+}
+
+function renderCtxPresets(): void {
+  const el = document.getElementById('ctx-presets');
+  if (!el) {
+    return;
+  }
+  const m = state.models.find((x) => x.id === state.currentModel);
+  // Presets are filtered to the selected model's real maximum (and always
+  // include the exact max), so you can never pick more than the model supports.
+  const presets = contextPresets(m?.maxContextLength);
+  el.innerHTML = '';
+  for (const v of presets) {
+    const b = document.createElement('button');
+    b.className = 'ctx-preset' + (v === state.minContext ? ' active' : '');
+    b.textContent = formatTokens(v);
+    b.title = v.toLocaleString() + ' tokens';
+    b.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (v === state.minContext) {
+        return;
+      }
+      state.minContext = v;
+      renderCtxPresets();
+      renderMeter();
+      post({ type: 'setContextSize', tokens: v });
+    });
+    el.appendChild(b);
+  }
 }
 
 function toggleModelMenu(): void {
@@ -644,7 +681,11 @@ function renderConnection(): void {
   const active = state.servers.find((s) => s.id === state.activeServerId);
   connBanner.classList.remove('hidden');
   connBanner.innerHTML = `
-    <span class="conn-msg">Can't reach LM Studio at <b>${escapeHtml(active?.url ?? '')}</b> — start its server or pick another.</span>
+    <span class="conn-ico"><svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M12 2a10 10 0 100 20 10 10 0 000-20zm-1 5h2v7h-2V7zm0 9h2v2h-2v-2z"/></svg></span>
+    <span class="conn-text">
+      <span class="conn-title">Can't reach LM Studio</span>
+      <span class="conn-sub"><code>${escapeHtml(active?.url ?? '')}</code> isn't responding — start the server or switch.</span>
+    </span>
     <span class="conn-actions">
       <button class="conn-btn" id="conn-retry">Retry</button>
       <button class="conn-btn primary" id="conn-servers">Servers</button>
@@ -660,18 +701,11 @@ function renderConnection(): void {
 // Context usage meter
 // ---------------------------------------------------------------------------
 function currentWindow(): number {
-  const m = state.models.find((x) => x.id === state.currentModel);
-  return (m && m.contextLength) || state.minContext || 0;
-}
-
-function formatTokens(n: number): string {
-  if (n >= 1_000_000) {
-    return (n / 1_000_000).toFixed(1).replace(/\.0$/, '') + 'M';
-  }
-  if (n >= 1000) {
-    return (n / 1000).toFixed(n >= 10_000 ? 0 : 1).replace(/\.0$/, '') + 'K';
-  }
-  return String(n);
+  // The loaded window if loaded, else min(configured, model max) — see core.
+  return computeWindow(
+    state.models.find((x) => x.id === state.currentModel),
+    state.minContext,
+  );
 }
 
 function tokensUsed(t: any): number {
@@ -732,6 +766,7 @@ function clearConversation(): void {
   messagesEl.querySelectorAll('.msg, .perm-card, .sys-chip, .error-bubble').forEach((n) => n.remove());
   state.realTokens = 0;
   state.compacted = false;
+  lastErrorText = '';
   toggleWelcome();
 }
 
@@ -1023,9 +1058,16 @@ function hideWorking(): void {
 
 function showError(message: string): void {
   hideWorking();
+  const text = (message || '').trim() || 'Something went wrong.';
+  // Don't stack duplicate bubbles — a dropped connection often arrives as both
+  // a session.error and a message error in the same turn.
+  if (text === lastErrorText) {
+    return;
+  }
+  lastErrorText = text;
   const el = document.createElement('div');
   el.className = 'error-bubble';
-  el.textContent = message;
+  el.textContent = text;
   messagesEl.appendChild(el);
   toggleWelcome();
   scrollToBottom();
@@ -1041,6 +1083,7 @@ function setBusy(busy: boolean): void {
   sendBtn.innerHTML = busy ? icon.stop : icon.send;
   sendBtn.classList.toggle('busy', busy);
   if (busy) {
+    lastErrorText = ''; // new turn — allow a fresh error to surface
     showWorking('Working…');
   } else {
     hideWorking();
@@ -1132,8 +1175,7 @@ function renderConversation(messages: MessageWithParts[]): void {
       }
     }
     if (m.info.error) {
-      const err: any = m.info.error;
-      showError(err?.data?.message ?? err?.message ?? 'Error');
+      showError(humanizeError(m.info.error, { subject: 'LM Studio' }));
     }
   }
   state.realTokens = lastUsed;
@@ -1162,7 +1204,7 @@ function handleEvent(event: OpencodeEvent): void {
           renderMeter();
         }
         if (info.error) {
-          showError(info.error?.data?.message ?? info.error?.message ?? 'Error');
+          showError(humanizeError(info.error, { subject: 'LM Studio' }));
         }
       }
       break;
@@ -1196,8 +1238,7 @@ function handleEvent(event: OpencodeEvent): void {
       renderMeter();
       break;
     case 'session.error': {
-      const err = p.error;
-      showError(err?.data?.message ?? err?.message ?? 'Session error');
+      showError(humanizeError(p.error, { subject: 'LM Studio' }));
       setBusy(false);
       break;
     }

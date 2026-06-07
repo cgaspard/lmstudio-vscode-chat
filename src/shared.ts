@@ -60,6 +60,7 @@ export type WebviewToHost =
   | { type: 'selectModel'; modelID: string }
   | { type: 'loadModel'; modelID: string }
   | { type: 'unloadModel'; modelID: string }
+  | { type: 'setContextSize'; tokens: number }
   | { type: 'refreshModels' }
   | { type: 'listServers' }
   | { type: 'addServer'; name: string; url: string }
