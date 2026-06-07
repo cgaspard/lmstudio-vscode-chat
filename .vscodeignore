@@ -1,5 +1,6 @@
 .vscode/**
 .vscode-test/**
+.claude/**
 .github/**
 node_modules/**
 out/**
