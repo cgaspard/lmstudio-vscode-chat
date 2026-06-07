@@ -1,0 +1,16 @@
+version: 0.1.0
+date: 2026-06-07
+highlights:
+  - First release. A Claude Code / Codex–style agentic chat panel for your local LM Studio models, powered by the open-source OpenCode agent — no cloud model, no API key.
+  - Docks into the secondary side bar next to Claude Code / Codex / Chat, with a Claude-style timeline (thinking, tool steps, response), streaming markdown, and inline permission prompts.
+added:
+  - Chat panel (Activity Bar + secondary side bar, plus "Open in Editor Tab") that drives a headless `opencode serve` pointed at LM Studio's OpenAI-compatible endpoint.
+  - Live model manager in the composer — load / eject LM Studio models over the REST API, with loaded state, context size, and capability badges.
+  - Multi-server support — register, switch, and remove LM Studio servers; an offline mode with a connection banner when a server is unreachable.
+  - Context window meter with compaction indicator, estimated from the agent overhead, conversation, attachments, and the open file.
+  - Thinking on/off toggle, image paste/drag/attach for vision models, and the currently open file attached as excludable context.
+  - Session history with persistence and resume; auto-named sessions; delete one or clear all.
+  - Auto-loads AGENTS.md / CLAUDE.md (via OpenCode) and warns when they are large relative to the context window.
+changed: []
+fixed: []
+removed: []

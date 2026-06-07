@@ -1,0 +1,191 @@
+{
+  "name": "lmstudio-code",
+  "displayName": "LM Studio Code",
+  "description": "Agentic coding panel for your local LM Studio models. A Claude Code / Codex–style chat experience powered by the open-source OpenCode agent, running entirely against your local models.",
+  "version": "0.1.0",
+  "publisher": "cgaspard",
+  "license": "MIT",
+  "icon": "media/icon.png",
+  "engines": {
+    "vscode": "^1.104.0"
+  },
+  "categories": [
+    "AI",
+    "Chat"
+  ],
+  "keywords": [
+    "lm studio",
+    "lmstudio",
+    "opencode",
+    "agent",
+    "local llm",
+    "claude code",
+    "codex",
+    "byom"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/cgaspard/lmstudio-vscode-chat"
+  },
+  "bugs": {
+    "url": "https://github.com/cgaspard/lmstudio-vscode-chat/issues"
+  },
+  "homepage": "https://github.com/cgaspard/lmstudio-vscode-chat#readme",
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "lmstudioCode",
+          "title": "LM Studio",
+          "icon": "media/activity-icon.svg",
+          "when": "lmstudioCode:doesNotSupportSecondarySidebar"
+        }
+      ],
+      "secondarySidebar": [
+        {
+          "id": "lmstudioCodeSecondary",
+          "title": "LM Studio",
+          "icon": "media/activity-icon.svg",
+          "when": "!lmstudioCode:doesNotSupportSecondarySidebar"
+        }
+      ]
+    },
+    "views": {
+      "lmstudioCode": [
+        {
+          "id": "lmstudioCode.chat",
+          "name": "LM Studio",
+          "type": "webview",
+          "when": "lmstudioCode:doesNotSupportSecondarySidebar"
+        }
+      ],
+      "lmstudioCodeSecondary": [
+        {
+          "id": "lmstudioCode.chatSecondary",
+          "name": "LM Studio",
+          "type": "webview",
+          "when": "!lmstudioCode:doesNotSupportSecondarySidebar"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "lmstudioCode.newChat",
+        "title": "LM Studio Code: New Chat",
+        "icon": "$(add)"
+      },
+      {
+        "command": "lmstudioCode.openInTab",
+        "title": "LM Studio Code: Open Chat in Editor Tab",
+        "icon": "$(window)"
+      },
+      {
+        "command": "lmstudioCode.history",
+        "title": "LM Studio Code: Session History",
+        "icon": "$(history)"
+      },
+      {
+        "command": "lmstudioCode.restartServer",
+        "title": "LM Studio Code: Restart OpenCode Server"
+      },
+      {
+        "command": "lmstudioCode.showLogs",
+        "title": "LM Studio Code: Show Logs"
+      },
+      {
+        "command": "lmstudioCode.focus",
+        "title": "LM Studio Code: Focus Chat"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "lmstudioCode.newChat",
+          "when": "view == lmstudioCode.chat || view == lmstudioCode.chatSecondary",
+          "group": "navigation@1"
+        },
+        {
+          "command": "lmstudioCode.history",
+          "when": "view == lmstudioCode.chat || view == lmstudioCode.chatSecondary",
+          "group": "navigation@2"
+        },
+        {
+          "command": "lmstudioCode.openInTab",
+          "when": "view == lmstudioCode.chat || view == lmstudioCode.chatSecondary",
+          "group": "navigation@3"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "LM Studio Code",
+      "properties": {
+        "lmstudioCode.lmStudioBaseUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:1234/v1",
+          "description": "Base URL of the LM Studio OpenAI-compatible server (must end in /v1)."
+        },
+        "lmstudioCode.opencodePath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the opencode binary. Leave empty to auto-detect (PATH, ~/.opencode/bin/opencode)."
+        },
+        "lmstudioCode.serverPort": {
+          "type": "number",
+          "default": 0,
+          "description": "Port for the embedded OpenCode server. 0 = pick a free port automatically."
+        },
+        "lmstudioCode.defaultModel": {
+          "type": "string",
+          "default": "",
+          "description": "Model id to select by default (must match an LM Studio model id). Empty = first available."
+        },
+        "lmstudioCode.agent": {
+          "type": "string",
+          "enum": [
+            "build",
+            "plan"
+          ],
+          "default": "build",
+          "description": "OpenCode agent. 'build' can edit files and run tools; 'plan' is read-only."
+        },
+        "lmstudioCode.autoEnsureContext": {
+          "type": "boolean",
+          "default": true,
+          "description": "Before prompting, ensure the selected LM Studio model is loaded with an adequate context length (uses the lms CLI). Prevents the 'tokens to keep > context length' error from small default context windows."
+        },
+        "lmstudioCode.minContextLength": {
+          "type": "number",
+          "default": 32768,
+          "description": "Minimum context length to (re)load models with when autoEnsureContext is enabled. OpenCode's agent system prompt + tools alone use ~11k tokens, so keep this comfortably large."
+        },
+        "lmstudioCode.gpuOffload": {
+          "type": "string",
+          "default": "max",
+          "description": "GPU offload ratio passed to 'lms load' when reloading a model for context (off | max | 0..1)."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run package",
+    "compile": "npm run check-types && node esbuild.js",
+    "check-types": "tsc --noEmit",
+    "watch": "node esbuild.js --watch",
+    "package": "npm run check-types && node esbuild.js --production",
+    "package:vsix": "vsce package"
+  },
+  "dependencies": {
+    "marked": "^12.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.104.0",
+    "@vscode/vsce": "^3.7.1",
+    "esbuild": "^0.20.0",
+    "typescript": "^5.3.0"
+  }
+}

@@ -1,0 +1,91 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run check-types
+
+      - name: Compile
+        run: npm run compile
+
+      - name: Resolve version from tag
+        id: ver
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Verify package.json version matches tag
+        run: |
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          if [ "$PKG_VERSION" != "${{ steps.ver.outputs.version }}" ]; then
+            echo "::error::package.json version ($PKG_VERSION) does not match tag (${{ steps.ver.outputs.version }})"
+            exit 1
+          fi
+
+      - name: Verify release notes file exists
+        run: |
+          FILE="releasenotes/${{ steps.ver.outputs.version }}.yaml"
+          if [ ! -f "$FILE" ]; then
+            echo "::error::Missing $FILE — every release needs a notes file"
+            exit 1
+          fi
+
+      - name: Render release body from YAML
+        run: |
+          node scripts/render-release-notes.js "${{ steps.ver.outputs.version }}" > release-body.md
+          echo "--- Rendered notes ---"
+          cat release-body.md
+
+      - name: Package .vsix
+        run: npx vsce package --out "lmstudio-code-${{ steps.ver.outputs.version }}.vsix"
+
+      - name: Create stable versionless mirror
+        run: cp "lmstudio-code-${{ steps.ver.outputs.version }}.vsix" lmstudio-code.vsix
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.tag }}
+          name: ${{ steps.ver.outputs.tag }}
+          body_path: release-body.md
+          files: |
+            lmstudio-code-${{ steps.ver.outputs.version }}.vsix
+            lmstudio-code.vsix
+          draft: false
+          prerelease: ${{ contains(steps.ver.outputs.version, '-') }}
+
+      # Publish the exact .vsix attached to the GitHub Release so the two
+      # artifacts are byte-identical. Skipped for pre-release tags (e.g.
+      # v0.1.0-rc.1). Requires a VSCE_PAT secret (Marketplace > Manage scope).
+      - name: Publish to VS Code Marketplace
+        if: ${{ !contains(steps.ver.outputs.version, '-') }}
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: |
+          if [ -z "$VSCE_PAT" ]; then
+            echo "::error::VSCE_PAT secret is not set. Add a Personal Access Token (Marketplace > Manage scope) at Settings > Secrets and variables > Actions > VSCE_PAT."
+            exit 1
+          fi
+          npx vsce publish --packagePath "lmstudio-code-${{ steps.ver.outputs.version }}.vsix"

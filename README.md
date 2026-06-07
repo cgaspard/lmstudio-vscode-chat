@@ -1,0 +1,84 @@
+# LM Studio Code
+
+An agentic coding panel for **your local [LM Studio](https://lmstudio.ai) models** — a Claude Code / Codex–style chat experience that runs entirely on your machine.
+
+Under the hood it drives the open-source [**OpenCode**](https://opencode.ai) agent (Apache/MIT) as a headless server, pointed at LM Studio's OpenAI-compatible endpoint. You get a real agent — file edits, shell tools, permissions, multi-step reasoning — with no cloud model and no API key.
+
+## Demo
+
+![LM Studio Code demo](media/sample.gif)
+
+## Why
+
+The official Claude Code and Codex VS Code extensions are **not open source**, so they can't be adapted to local models. The *CLIs* behind several agents are open, though — and OpenCode in particular ships a headless server + provider-agnostic model layer that happily talks to LM Studio. This extension wraps that server in a native chat panel.
+
+## Features
+
+- **Chat panel** in the Activity Bar (and "Open in Editor Tab" for parallel conversations)
+- **Streaming** responses with markdown + code rendering
+- **Reasoning** blocks (collapsible "Thinking")
+- **Agent tools** — file reads/edits, shell, search — surfaced as tool cards
+- **Permission prompts** — Allow once / Allow always / Deny, inline
+- **Model picker** populated live from LM Studio (shows loaded ● / unloaded ○ + context size)
+- **Agent modes** — `build` (can edit) and `plan` (read-only)
+- **Session history** — browse, resume, rename-by-first-message, delete
+- **Auto-context** — reloads the selected model with an adequate context window via the `lms` CLI so OpenCode's large system prompt doesn't overflow a 4096-token default
+
+## Requirements
+
+- **VS Code** 1.104+
+- **[LM Studio](https://lmstudio.ai)** running with its local server started (default `http://127.0.0.1:1234`) and at least one chat model
+- **[OpenCode](https://opencode.ai)** installed (`brew install sst/tap/opencode` or `npm i -g opencode-ai`). Auto-detected from `PATH` or `~/.opencode/bin/opencode`.
+- *(recommended)* the **`lms` CLI** for automatic context-window management
+
+## Quick start
+
+1. Start LM Studio's server and load a model.
+2. Install this extension (or run it from source — see below).
+3. Click the spark icon in the Activity Bar.
+4. Pick a model, type a task, hit Enter.
+
+## Settings
+
+| Setting | Default | Description |
+| --- | --- | --- |
+| `lmstudioCode.lmStudioBaseUrl` | `http://127.0.0.1:1234/v1` | LM Studio OpenAI-compatible base URL |
+| `lmstudioCode.opencodePath` | _(auto)_ | Path to the `opencode` binary |
+| `lmstudioCode.serverPort` | `0` | Embedded server port (0 = auto) |
+| `lmstudioCode.defaultModel` | _(first)_ | Default model id |
+| `lmstudioCode.agent` | `build` | `build` or `plan` |
+| `lmstudioCode.autoEnsureContext` | `true` | Reload model with adequate context before prompting |
+| `lmstudioCode.minContextLength` | `16384` | Context length to (re)load with |
+| `lmstudioCode.gpuOffload` | `max` | GPU offload for `lms load` |
+
+## How it works
+
+```
+VS Code webview (chat UI)
+        │  postMessage
+        ▼
+Extension host (bridge)
+        │  HTTP + SSE  (raw fetch)
+        ▼
+opencode serve   ──OpenAI /v1──▶  LM Studio (local model)
+   (headless, config injected via OPENCODE_CONFIG_CONTENT)
+```
+
+The LM Studio provider is injected into OpenCode at launch via the
+`OPENCODE_CONFIG_CONTENT` environment variable — **nothing is written to your
+workspace or global config.** Discovered LM Studio models are declared in the
+provider's `models` map (OpenCode requires this for custom OpenAI-compatible
+providers).
+
+## Develop from source
+
+```bash
+npm install
+npm run compile        # type-check + bundle (extension + webview)
+# then press F5 in VS Code to launch the Extension Development Host
+npm run package:vsix   # build a .vsix
+```
+
+## License
+
+MIT
