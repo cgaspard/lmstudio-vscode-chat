@@ -9,24 +9,16 @@ permissions:
   contents: write
 
 jobs:
-  release:
+  # Validate the tag/version/notes once and create the GitHub Release shell that
+  # every platform build then uploads its VSIX into.
+  prepare:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+      tag: ${{ steps.ver.outputs.tag }}
+      prerelease: ${{ steps.ver.outputs.prerelease }}
     steps:
       - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Typecheck
-        run: npm run check-types
-
-      - name: Compile
-        run: npm run compile
 
       - name: Resolve version from tag
         id: ver
@@ -35,6 +27,11 @@ jobs:
           VERSION="${TAG#v}"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          if [[ "$VERSION" == *-* ]]; then
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Verify package.json version matches tag
         run: |
@@ -58,29 +55,85 @@ jobs:
           echo "--- Rendered notes ---"
           cat release-body.md
 
-      - name: Package .vsix
-        run: npx vsce package --out "lmstudio-code-${{ steps.ver.outputs.version }}.vsix"
-
-      - name: Create stable versionless mirror
-        run: cp "lmstudio-code-${{ steps.ver.outputs.version }}.vsix" lmstudio-code.vsix
-
-      - name: Create GitHub Release
+      - name: Create GitHub Release (shell; assets uploaded per platform)
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.ver.outputs.tag }}
           name: ${{ steps.ver.outputs.tag }}
           body_path: release-body.md
-          files: |
-            lmstudio-code-${{ steps.ver.outputs.version }}.vsix
-            lmstudio-code.vsix
           draft: false
-          prerelease: ${{ contains(steps.ver.outputs.version, '-') }}
+          prerelease: ${{ steps.ver.outputs.prerelease == 'true' }}
 
-      # Publish the exact .vsix attached to the GitHub Release so the two
-      # artifacts are byte-identical. Skipped for pre-release tags (e.g.
-      # v0.1.0-rc.1). Requires a VSCE_PAT secret (Marketplace > Manage scope).
-      - name: Publish to VS Code Marketplace
-        if: ${{ !contains(steps.ver.outputs.version, '-') }}
+  # One leg per VS Code platform target: fetch the matching OpenCode binary,
+  # package a platform-specific VSIX, attach it to the Release, and publish it.
+  # All targets package fine on Linux — fetching is just download + untar, and
+  # vsce preserves the Unix exec bit through the zip.
+  release:
+    needs: prepare
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - darwin-arm64
+          - darwin-x64
+          - linux-x64
+          - linux-arm64
+          - win32-x64
+          - win32-arm64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run check-types
+
+      - name: Compile
+        run: npm run compile
+
+      - name: Fetch bundled OpenCode binary for ${{ matrix.target }}
+        run: node scripts/fetch-opencode.js ${{ matrix.target }}
+
+      - name: Package ${{ matrix.target }} .vsix
+        run: |
+          VER="${{ needs.prepare.outputs.version }}"
+          npx vsce package --target ${{ matrix.target }} --out "lmstudio-code-${{ matrix.target }}-${VER}.vsix"
+          # Stable versionless per-platform mirror for predictable download URLs.
+          cp "lmstudio-code-${{ matrix.target }}-${VER}.vsix" "lmstudio-code-${{ matrix.target }}.vsix"
+
+      - name: Verify the VSIX actually bundled the binary
+        run: |
+          VER="${{ needs.prepare.outputs.version }}"
+          VSIX="lmstudio-code-${{ matrix.target }}-${VER}.vsix"
+          EXE="extension/bin/opencode"
+          case "${{ matrix.target }}" in win32-*) EXE="extension/bin/opencode.exe" ;; esac
+          SIZE=$(unzip -l "$VSIX" "$EXE" | awk -v f="$EXE" '$4==f {print $1}')
+          if [ -z "$SIZE" ] || [ "$SIZE" -lt 1000000 ]; then
+            echo "::error::$VSIX is missing $EXE or it is too small ($SIZE bytes)"
+            exit 1
+          fi
+          echo "OK: $EXE present in $VSIX ($SIZE bytes)"
+
+      - name: Upload VSIX to the GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.prepare.outputs.tag }}
+          files: |
+            lmstudio-code-${{ matrix.target }}-${{ needs.prepare.outputs.version }}.vsix
+            lmstudio-code-${{ matrix.target }}.vsix
+
+      # Publish the exact .vsix attached to the Release so the two artifacts are
+      # byte-identical. Skipped for pre-release tags (e.g. v0.1.0-rc.1).
+      # Requires a VSCE_PAT secret (Marketplace > Manage scope).
+      - name: Publish ${{ matrix.target }} to VS Code Marketplace
+        if: ${{ needs.prepare.outputs.prerelease == 'false' }}
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
         run: |
@@ -88,4 +141,5 @@ jobs:
             echo "::error::VSCE_PAT secret is not set. Add a Personal Access Token (Marketplace > Manage scope) at Settings > Secrets and variables > Actions > VSCE_PAT."
             exit 1
           fi
-          npx vsce publish --packagePath "lmstudio-code-${{ steps.ver.outputs.version }}.vsix"
+          VER="${{ needs.prepare.outputs.version }}"
+          npx vsce publish --packagePath "lmstudio-code-${{ matrix.target }}-${VER}.vsix"

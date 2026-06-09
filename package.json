@@ -2,10 +2,11 @@
   "name": "lmstudio-code",
   "displayName": "LM Studio Code",
   "description": "Agentic coding panel for your local LM Studio models. A Claude Code / Codex–style chat experience powered by the open-source OpenCode agent, running entirely against your local models.",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "publisher": "cgaspard",
   "license": "MIT",
   "icon": "media/icon.png",
+  "opencodeVersion": "1.16.2",
   "engines": {
     "vscode": "^1.104.0"
   },
@@ -131,7 +132,7 @@
         "lmstudioCode.opencodePath": {
           "type": "string",
           "default": "",
-          "description": "Path to the opencode binary. Leave empty to auto-detect (PATH, ~/.opencode/bin/opencode)."
+          "description": "Override path to an opencode binary. Leave empty to use your own install (PATH, ~/.opencode/bin/opencode) if present, otherwise the binary bundled with this extension."
         },
         "lmstudioCode.serverPort": {
           "type": "number",
@@ -177,7 +178,9 @@
     "check-types:test": "tsc -p tsconfig.test.json",
     "watch": "node esbuild.js --watch",
     "package": "npm run check-types && node esbuild.js --production",
+    "bundle:opencode": "node scripts/fetch-opencode.js",
     "package:vsix": "vsce package",
+    "package:vsix:bundled": "npm run bundle:opencode && vsce package --target ${VSCE_TARGET:-$(node -p \"process.platform+'-'+process.arch\")}",
     "test": "npm run check-types:test && node esbuild.test.js && node --test \"out-test/**/*.test.js\"",
     "test:watch": "node esbuild.test.js && node --test --watch \"out-test/**/*.test.js\""
   },

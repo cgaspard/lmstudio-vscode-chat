@@ -1,0 +1,13 @@
+version: 0.4.0
+date: 2026-06-08
+highlights:
+  - OpenCode is now bundled — the matching platform binary ships inside the extension, so there's nothing extra to install and the agent works fully offline.
+  - The extension is published as platform-specific builds (macOS, Linux, Windows on x64 and arm64); the Marketplace serves the right one for your machine automatically.
+added:
+  - The pinned OpenCode binary is fetched at build time and packaged into the VSIX per platform, removing the previous "install OpenCode yourself" prerequisite.
+  - The managed OpenCode server now runs against a private data/config/cache/state directory under the extension's global storage, so it never shares session or auth state with a separate OpenCode install you may already use.
+removed: []
+changed:
+  - Binary resolution now prefers an explicit `lmstudioCode.opencodePath`, then a user install on PATH or in `~/.opencode/bin`, and finally falls back to the bundled binary — so power users can still run their own build, while everyone else gets a zero-setup experience.
+  - The "opencode not found" error and the `opencodePath` setting description were reworded to reflect that a binary is bundled by default.
+fixed: []

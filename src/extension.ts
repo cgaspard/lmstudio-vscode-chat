@@ -16,7 +16,11 @@ export function activate(context: vscode.ExtensionContext): void {
   const cfg = getConfig();
   const servers = new ServerRegistry(context, cfg.lmStudioBaseUrl);
   const lmStudio = new LMStudioClient(servers.active().url);
-  server = new OpencodeServerManager(cfg, lmStudio);
+  // Bundled binary lives under the extension dir; the managed server's on-disk
+  // state is sandboxed under globalStorage so it never collides with a user's
+  // own OpenCode install.
+  const dataDir = vscode.Uri.joinPath(context.globalStorageUri, 'opencode').fsPath;
+  server = new OpencodeServerManager(cfg, lmStudio, context.extensionPath, dataDir);
 
   const deps: BridgeDeps = { context, server, lmStudio, servers };
 

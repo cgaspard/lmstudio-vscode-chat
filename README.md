@@ -28,8 +28,9 @@ The official Claude Code and Codex VS Code extensions are **not open source**, s
 
 - **VS Code** 1.104+
 - **[LM Studio](https://lmstudio.ai)** running with its local server started (default `http://127.0.0.1:1234`) and at least one chat model
-- **[OpenCode](https://opencode.ai)** installed (`brew install sst/tap/opencode` or `npm i -g opencode-ai`). Auto-detected from `PATH` or `~/.opencode/bin/opencode`.
 - *(recommended)* the **`lms` CLI** for automatic context-window management
+
+> **[OpenCode](https://opencode.ai) is bundled** — the matching platform binary ships inside the extension, so there's nothing extra to install and it works offline. Power users can point at their own build with `lmstudioCode.opencodePath`; an install on your `PATH` or in `~/.opencode/bin` is preferred over the bundled copy if present.
 
 ## Quick start
 
@@ -43,7 +44,7 @@ The official Claude Code and Codex VS Code extensions are **not open source**, s
 | Setting | Default | Description |
 | --- | --- | --- |
 | `lmstudioCode.lmStudioBaseUrl` | `http://127.0.0.1:1234/v1` | LM Studio OpenAI-compatible base URL |
-| `lmstudioCode.opencodePath` | _(auto)_ | Path to the `opencode` binary |
+| `lmstudioCode.opencodePath` | _(bundled)_ | Override path to an `opencode` binary; empty uses your own install (PATH / `~/.opencode`) or the bundled one |
 | `lmstudioCode.serverPort` | `0` | Embedded server port (0 = auto) |
 | `lmstudioCode.defaultModel` | _(first)_ | Default model id |
 | `lmstudioCode.agent` | `build` | `build` or `plan` |
@@ -74,10 +75,16 @@ providers).
 
 ```bash
 npm install
-npm run compile        # type-check + bundle (extension + webview)
+npm run bundle:opencode      # fetch the pinned OpenCode binary into bin/ for your platform
+npm run compile              # type-check + bundle (extension + webview)
 # then press F5 in VS Code to launch the Extension Development Host
-npm run package:vsix   # build a .vsix
+npm run package:vsix:bundled # build a platform .vsix with the binary embedded
 ```
+
+The OpenCode binary is fetched at build time (pinned by `opencodeVersion` in
+`package.json`) and is never committed — `bin/` is git-ignored. Bump that field
+to upgrade the bundled OpenCode. F5 also resolves the binary from `bin/`, so run
+`bundle:opencode` once before launching the dev host.
 
 ## License
 

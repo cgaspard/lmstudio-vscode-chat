@@ -17,8 +17,19 @@ jobs:
           cache: 'npm'
       - run: npm ci
       - run: npm run check-types
-      - run: npm run compile
-      - run: npx vsce package --out lmstudio-code-dev.vsix
+      - run: npm test
+      # Bundle one representative target so the dev VSIX is a real, runnable
+      # package (matches what Release produces). linux-x64 keeps CI fast.
+      - run: node scripts/fetch-opencode.js linux-x64
+      - run: npx vsce package --target linux-x64 --out lmstudio-code-dev.vsix
+      - name: Verify the dev VSIX bundled the binary
+        run: |
+          SIZE=$(unzip -l lmstudio-code-dev.vsix extension/bin/opencode | awk '$4=="extension/bin/opencode" {print $1}')
+          if [ -z "$SIZE" ] || [ "$SIZE" -lt 1000000 ]; then
+            echo "::error::dev VSIX is missing extension/bin/opencode or it is too small ($SIZE bytes)"
+            exit 1
+          fi
+          echo "OK: opencode bundled ($SIZE bytes)"
       - uses: actions/upload-artifact@v4
         with:
           name: lmstudio-code-dev-vsix
