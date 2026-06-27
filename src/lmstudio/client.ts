@@ -16,6 +16,8 @@ export interface LMStudioModel {
   vision?: boolean;
   quantization?: string;
   arch?: string;
+  publisher?: string; // e.g. "unsloth", "lmstudio-community" — disambiguates same-named models
+  format?: string; // runtime format, e.g. "MLX" or "GGUF" (from compatibility_type)
 }
 
 /** Discovery + lifecycle helper for a local LM Studio server. */
@@ -45,12 +47,53 @@ export class LMStudioClient {
     }
   }
 
-  /** List chat-capable models (embeddings filtered out), richest metadata first. */
+  /**
+   * List chat-capable models (embeddings filtered out), richest metadata first.
+   *
+   * Primary source is `/api/v1/models`: it's the *canonical* keyed list (one
+   * entry per model, keyed by e.g. "unsloth/qwen3.6-27b-mlx"), which LM Studio's
+   * own UI uses. `/api/v0/models` is avoided as the primary because it can
+   * surface a phantom duplicate of a loaded model under its bare instance id
+   * (e.g. both "qwen3.6-27b-mlx" and "unsloth/qwen3.6-27b-mlx"). The `key`
+   * doubles as the model id everywhere — LM Studio accepts it for load and for
+   * `/v1/chat/completions` inference, resolving it to the loaded instance.
+   */
   async listModels(): Promise<LMStudioModel[]> {
     try {
-      const res = await fetch(`${this.rest}/api/v0/models`, {
-        signal: AbortSignal.timeout(8000),
-      });
+      const res = await fetch(`${this.rest}/api/v1/models`, { signal: AbortSignal.timeout(8000) });
+      if (res.ok) {
+        const json = (await res.json()) as { models?: any[] };
+        const arr = json.models ?? [];
+        return arr
+          .filter(
+            (m) => m && typeof m.key === 'string' && !/embed/i.test(m.type ?? '') && !/embed/i.test(m.key),
+          )
+          .map((m): LMStudioModel => {
+            const instance = (m.loaded_instances ?? [])[0];
+            const caps = m.capabilities ?? {};
+            return {
+              id: m.key,
+              displayName: prettyName(m.key),
+              type: m.type ?? 'llm',
+              state: instance ? 'loaded' : 'not-loaded',
+              maxContextLength: m.max_context_length,
+              loadedContextLength: instance?.config?.context_length,
+              toolUse: !!(caps.trained_for_tool_use ?? caps.tool_use),
+              vision: !!caps.vision,
+              quantization: typeof m.quantization === 'object' ? m.quantization?.name : m.quantization,
+              arch: m.architecture ?? m.arch,
+              publisher: m.publisher,
+              format: prettyFormat(m.format),
+            };
+          });
+      }
+    } catch (err) {
+      logError('listModels via /api/v1/models failed, falling back to /api/v0/models', err);
+    }
+    // Fallback: the v0 rich endpoint (may include phantom dup rows, but still
+    // carries metadata) when v1 is unavailable on an older LM Studio.
+    try {
+      const res = await fetch(`${this.rest}/api/v0/models`, { signal: AbortSignal.timeout(8000) });
       if (res.ok) {
         const json = (await res.json()) as { data?: any[] };
         const arr = json.data ?? [];
@@ -67,12 +110,14 @@ export class LMStudioClient {
             vision: m.type === 'vlm',
             quantization: m.quantization,
             arch: m.arch,
+            publisher: m.publisher,
+            format: prettyFormat(m.compatibility_type),
           }));
       }
     } catch (err) {
       logError('listModels via /api/v0/models failed, falling back to /v1/models', err);
     }
-    // Fallback: OpenAI-compatible endpoint (no rich metadata).
+    // Last resort: OpenAI-compatible endpoint (no rich metadata).
     try {
       const res = await fetch(`${this.baseUrl}/models`, { signal: AbortSignal.timeout(8000) });
       if (res.ok) {
@@ -188,7 +233,13 @@ export class LMStudioClient {
     }
   }
 
-  /** Return the loaded instance ids for a model (empty if none / unsupported). */
+  /**
+   * Return the loaded instance ids for a model (empty if none / unsupported).
+   * `modelId` (from /api/v0/models) can be a bare id like "qwen3.6-27b-mlx"
+   * while /api/v1/models keys the same model as "unsloth/qwen3.6-27b-mlx" and
+   * exposes the bare id only on the loaded *instance*. So match on the model
+   * `key`/`id` OR any loaded instance id — otherwise an eject silently no-ops.
+   */
   async loadedInstanceIds(modelId: string): Promise<string[]> {
     try {
       const res = await fetch(`${this.rest}/api/v1/models`, { signal: AbortSignal.timeout(8000) });
@@ -197,8 +248,22 @@ export class LMStudioClient {
       }
       const j = (await res.json()) as { models?: any[]; data?: any[] };
       const arr = j.models ?? j.data ?? [];
-      const m = arr.find((x) => x.key === modelId || x.id === modelId);
-      return (m?.loaded_instances ?? []).map((i: any) => i.id).filter(Boolean);
+      const ids: string[] = [];
+      for (const x of arr) {
+        const instances = (x?.loaded_instances ?? []) as Array<{ id?: string }>;
+        const keyMatches = x.key === modelId || x.id === modelId;
+        for (const inst of instances) {
+          if (!inst?.id) {
+            continue;
+          }
+          // Take the instance if its model matches, or the instance id itself is
+          // the one we were asked to unload (the bare-id case).
+          if (keyMatches || inst.id === modelId) {
+            ids.push(inst.id);
+          }
+        }
+      }
+      return ids;
     } catch {
       return [];
     }
@@ -206,8 +271,21 @@ export class LMStudioClient {
 }
 
 function prettyName(id: string): string {
+  if (!id) {
+    return 'unknown';
+  }
   const base = id.split('/').pop() ?? id;
   return base;
+}
+
+// LM Studio's `compatibility_type` (e.g. "mlx", "gguf") → a clean badge label.
+// Unknown values are upper-cased as-is so new runtimes still surface something.
+function prettyFormat(compatibilityType?: string): string | undefined {
+  if (!compatibilityType) {
+    return undefined;
+  }
+  const known: Record<string, string> = { mlx: 'MLX', gguf: 'GGUF' };
+  return known[compatibilityType.toLowerCase()] ?? compatibilityType.toUpperCase();
 }
 
 /** Run `lms` with args, capturing output; rejects on non-zero exit. */

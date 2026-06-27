@@ -1,6 +1,16 @@
 import { marked } from 'marked';
+import {
+  CompactionState,
+  isCompactionPart,
+  isSyntheticText,
+  markCompaction,
+  newCompactionState,
+  shouldSuppressMessage,
+} from '../core/compaction';
 import { computeWindow, contextPresets, formatTokens } from '../core/context';
 import { humanizeError } from '../core/errors';
+import { modelDisambiguator, modelIdentity } from '../core/models';
+import { isTodoCardCollapsed, summarizeTodos, Todo } from '../core/todos';
 import { buildAnswers, isEmptyAnswer, parseQuestionBlob, QInfo } from '../core/question';
 import type { MessageWithParts, OpencodeEvent, Part } from '../opencode/protocol';
 import type { HostToWebview, UiImage, UiModel, UiServer, UiSession, WebviewToHost } from '../shared';
@@ -33,6 +43,8 @@ interface State {
   minContext: number;
   realTokens: number;
   compacted: boolean;
+  compacting: boolean; // a /compact run is in flight — input is blocked
+  pendingCompaction: boolean; // compacted; true size is unknown until the next turn
   loadingModels: Set<string>;
   servers: UiServer[];
   activeServerId: string;
@@ -54,6 +66,8 @@ const state: State = {
   minContext: 32768,
   realTokens: 0,
   compacted: false,
+  compacting: false,
+  pendingCompaction: false,
   loadingModels: new Set<string>(),
   servers: [],
   activeServerId: '',
@@ -68,7 +82,20 @@ const roleByMessage = new Map<string, string>();
 const permissionEls = new Map<string, HTMLElement>();
 const questionEls = new Map<string, HTMLElement>();
 const toolCollapsed = new Map<string, boolean>(); // partID -> collapsed?
+// The agent's todowrite tool is rendered as ONE live checklist per assistant
+// message (it calls todowrite repeatedly, replacing the whole list). Keyed by
+// messageID so repeated calls update one card in place instead of stacking.
+const todoCards = new Map<string, HTMLElement>(); // messageID -> checklist card el
+const todoCollapsed = new Map<string, boolean>(); // messageID -> user-forced collapse (unset = auto)
 let lastErrorText = ''; // dedup repeated error bubbles within a turn
+let turnTruncated = false; // the current turn hit its output-token budget (finish reason 'length')
+// Compaction bookkeeping. OpenCode's summarize ("/compact") writes a user
+// message with a `compaction` part, then streams the summarizer model's own
+// reasoning + the summary template as an ordinary assistant turn. Neither is a
+// real chat turn, so we collapse the marker to a chip and suppress that turn.
+// Decision logic lives in ../core/compaction (pure + unit-tested).
+const compaction: CompactionState = newCompactionState();
+let lastCompactionChip: HTMLElement | null = null; // so the summary can be attached when it arrives
 
 // ---------------------------------------------------------------------------
 // Icons
@@ -88,14 +115,25 @@ const icon = {
   paperclip: `<svg viewBox="0 0 16 16" width="14" height="14"><path fill="none" stroke="currentColor" stroke-width="1.3" d="M11.5 6.5 6.8 11.2a2 2 0 0 1-2.8-2.8l5-5a3 3 0 0 1 4.2 4.2l-5.1 5.1a4 4 0 0 1-5.6-5.6l4.8-4.8"/></svg>`,
   refresh: `<svg viewBox="0 0 16 16" width="13" height="13"><path fill="currentColor" d="M13.65 3.85A6 6 0 1 0 14 8h-1.5a4.5 4.5 0 1 1-1.2-3.35L9 6.5h5V1.5z"/></svg>`,
   caret: `<svg viewBox="0 0 16 16" width="10" height="10"><path fill="currentColor" d="M4 6l4 4 4-4z"/></svg>`,
+  checklist: `<svg viewBox="0 0 16 16" width="13" height="13"><path fill="currentColor" d="M2 3h2v2H2zM6 3.5h8v1H6zM2 7h2v2H2zM6 7.5h8v1H6zM2 11h2v2H2zM6 11.5h8v1H6z"/></svg>`,
+  // Flat monochrome capability glyphs for the model list (currentColor, no fill colors).
+  eye: `<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.2" d="M1 8s2.5-4.5 7-4.5S15 8 15 8s-2.5 4.5-7 4.5S1 8 1 8z"/><circle cx="8" cy="8" r="1.8" fill="currentColor"/></svg>`,
+  wrench: `<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path fill="currentColor" d="M11.5 1.5a3.5 3.5 0 0 0-3.4 4.4L1.7 12.3l1.9 1.9 6.4-6.4A3.5 3.5 0 1 0 11.5 1.5z"/></svg>`,
+  spinner: `<svg viewBox="0 0 16 16" width="13" height="13" class="spin" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" d="M8 1.6a6.4 6.4 0 1 1-6.2 4.8" /></svg>`,
 };
 
 // ---------------------------------------------------------------------------
 // DOM scaffolding
 // ---------------------------------------------------------------------------
+// Stick-to-bottom autoscroll. While `autoScrollEnabled` is true, streamed
+// content keeps the view pinned to the bottom; once the user scrolls up past
+// the threshold it turns off so they can read back mid-generation.
+const STICK_TO_BOTTOM_THRESHOLD = 120; // px from the bottom that still counts as "at bottom"
+let autoScrollEnabled = true;
 let messagesEl!: HTMLElement;
 let welcomeEl!: HTMLElement;
 let inputEl!: HTMLTextAreaElement;
+let slashMenuEl!: HTMLElement;
 let sendBtn!: HTMLButtonElement;
 let modelBtn!: HTMLButtonElement;
 let modelMenu!: HTMLElement;
@@ -146,6 +184,7 @@ function build(): void {
     </div>
     <div class="composer">
       <div class="composer-box">
+        <div id="slash-menu" class="slash-menu hidden"></div>
         <div id="thumbs" class="thumbs"></div>
         <textarea id="input" rows="1" placeholder="Ask anything, paste an image, or describe a task…"></textarea>
         <div class="composer-row">
@@ -208,8 +247,17 @@ function build(): void {
   `;
 
   messagesEl = document.getElementById('messages')!;
+  // Stick-to-bottom: stop forcing the view down once the user scrolls up to
+  // read back, and re-engage when they return near the bottom. Without this,
+  // every streamed token would yank the scroll position to the bottom.
+  messagesEl.addEventListener('scroll', () => {
+    const distanceFromBottom =
+      messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight;
+    autoScrollEnabled = distanceFromBottom <= STICK_TO_BOTTOM_THRESHOLD;
+  });
   welcomeEl = document.getElementById('welcome')!;
   inputEl = document.getElementById('input') as HTMLTextAreaElement;
+  slashMenuEl = document.getElementById('slash-menu')!;
   sendBtn = document.getElementById('send') as HTMLButtonElement;
   modelBtn = document.getElementById('model-btn') as HTMLButtonElement;
   modelMenu = document.getElementById('model-menu')!;
@@ -267,6 +315,29 @@ function build(): void {
 
   sendBtn.addEventListener('click', onSend);
   inputEl.addEventListener('keydown', (e) => {
+    // While the slash-command menu is open it owns the arrow / tab / esc keys.
+    if (slashMenuOpen()) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        moveSlashSelection(1);
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        moveSlashSelection(-1);
+        return;
+      }
+      if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) {
+        e.preventDefault();
+        acceptSlashCommand();
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        closeSlashMenu();
+        return;
+      }
+    }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       if (!state.busy) {
@@ -274,7 +345,11 @@ function build(): void {
       }
     }
   });
-  inputEl.addEventListener('input', autoGrow);
+  inputEl.addEventListener('input', () => {
+    autoGrow();
+    updateSlashMenu();
+  });
+  inputEl.addEventListener('blur', () => closeSlashMenu());
 
   // Thinking toggle
   thinkBtn.addEventListener('click', () => {
@@ -385,15 +460,210 @@ function autoGrow(): void {
 }
 
 // ---------------------------------------------------------------------------
+// Slash commands
+// ---------------------------------------------------------------------------
+interface SlashCommand {
+  name: string;
+  hint: string;
+  run: () => void;
+}
+
+const SLASH_COMMANDS: SlashCommand[] = [
+  { name: '/clear', hint: 'Clear the conversation and start fresh', run: clearChatCommand },
+  { name: '/compact', hint: 'Summarize the conversation to free up context', run: compactCommand },
+  { name: '/file', hint: 'Toggle including the open file as context', run: toggleFileCommand },
+  { name: '/help', hint: 'List the available slash commands', run: helpCommand },
+];
+
+function clearChatCommand(): void {
+  post({ type: 'clearAllSessions' });
+}
+
+function compactCommand(): void {
+  post({ type: 'compact' });
+}
+
+function toggleFileCommand(): void {
+  if (!state.activeFile) {
+    addSysChip('No open file to include as context.');
+    return;
+  }
+  state.includeActiveFile = !state.includeActiveFile;
+  persist();
+  renderActiveFile();
+  renderMeter();
+  addSysChip(`Open file ${state.includeActiveFile ? 'included in' : 'excluded from'} context.`);
+}
+
+function helpCommand(): void {
+  const lines = SLASH_COMMANDS.map((c) => `${c.name} — ${c.hint}`).join('\n');
+  addSysChip(`Slash commands:\n${lines}`);
+}
+
+// Marks where the conversation was compacted. Rendered in place of the noisy
+// summarizer turn; collapsed by default since the summary is internal context.
+// The summary text arrives later (via the `compacting` done message) and gets
+// attached, making the chip expandable.
+function showCompactionChip(): HTMLElement {
+  const el = document.createElement('div');
+  el.className = 'sys-chip compaction-chip';
+  const head = document.createElement('button');
+  head.className = 'compaction-head';
+  head.type = 'button';
+  head.innerHTML =
+    '<span class="compaction-chev"></span><span>⊘ Conversation compacted to free up context</span>';
+  const body = document.createElement('div');
+  body.className = 'compaction-body';
+  el.appendChild(head);
+  el.appendChild(body);
+  // No summary yet → nothing to expand. attachCompactionSummary() flips this on.
+  head.disabled = true;
+  head.addEventListener('click', () => {
+    if (head.disabled) {
+      return;
+    }
+    el.classList.toggle('open');
+  });
+  messagesEl.appendChild(el);
+  lastCompactionChip = el;
+  toggleWelcome();
+  scrollToBottom();
+  return el;
+}
+
+// Attach the summary markdown OpenCode produced to the most recent chip, making
+// it expandable. Called when the bridge reports the compaction finished.
+function attachCompactionSummary(summary: string): void {
+  const chip = lastCompactionChip;
+  if (!chip || !summary.trim()) {
+    return;
+  }
+  const head = chip.querySelector('.compaction-head') as HTMLButtonElement | null;
+  const body = chip.querySelector('.compaction-body') as HTMLElement | null;
+  if (!head || !body) {
+    return;
+  }
+  body.innerHTML = mdToHtml(summary);
+  head.disabled = false;
+}
+
+// A small inline note from the extension UI itself (not the model).
+function addSysChip(text: string): void {
+  const el = document.createElement('div');
+  el.className = 'sys-chip';
+  el.textContent = text;
+  messagesEl.appendChild(el);
+  toggleWelcome();
+  forceScrollToBottom();
+}
+
+// --- Autocomplete menu ---
+// Index of the highlighted row while the menu is open, or -1 when closed.
+let slashActiveIndex = -1;
+
+function slashMenuOpen(): boolean {
+  return !slashMenuEl.classList.contains('hidden');
+}
+
+// Commands matching the current input. Only offered while the line is a bare
+// `/token` (no spaces yet) — once the user moves past the command name we stop
+// suggesting so normal prompts starting with "/" aren't hijacked.
+function matchingCommands(): SlashCommand[] {
+  const value = inputEl.value;
+  if (!value.startsWith('/') || /\s/.test(value)) {
+    return [];
+  }
+  const q = value.toLowerCase();
+  return SLASH_COMMANDS.filter((c) => c.name.startsWith(q));
+}
+
+function updateSlashMenu(): void {
+  const matches = matchingCommands();
+  if (!matches.length) {
+    closeSlashMenu();
+    return;
+  }
+  if (slashActiveIndex < 0 || slashActiveIndex >= matches.length) {
+    slashActiveIndex = 0;
+  }
+  slashMenuEl.innerHTML = '';
+  matches.forEach((cmd, i) => {
+    const row = document.createElement('div');
+    row.className = `slash-item${i === slashActiveIndex ? ' active' : ''}`;
+    row.innerHTML = `<span class="slash-name">${escapeHtml(cmd.name)}</span><span class="slash-hint">${escapeHtml(cmd.hint)}</span>`;
+    row.addEventListener('mousedown', (e) => {
+      e.preventDefault(); // keep focus in the textarea
+      acceptSlashCommand(cmd);
+    });
+    slashMenuEl.appendChild(row);
+  });
+  slashMenuEl.classList.remove('hidden');
+}
+
+function closeSlashMenu(): void {
+  slashMenuEl.classList.add('hidden');
+  slashMenuEl.innerHTML = '';
+  slashActiveIndex = -1;
+}
+
+function moveSlashSelection(delta: number): void {
+  const matches = matchingCommands();
+  if (!matches.length) {
+    return;
+  }
+  slashActiveIndex = (slashActiveIndex + delta + matches.length) % matches.length;
+  updateSlashMenu();
+}
+
+// Run the highlighted (or given) command straight from the menu.
+function acceptSlashCommand(cmd?: SlashCommand): void {
+  const matches = matchingCommands();
+  const chosen = cmd ?? matches[slashActiveIndex];
+  closeSlashMenu();
+  if (chosen) {
+    chosen.run();
+    inputEl.value = '';
+    autoGrow();
+  }
+}
+
+// Run a slash command if the input is one. Returns true when handled (so the
+// caller should NOT send it to the model). An unknown /command is reported and
+// also swallowed, so a typo never gets sent to the model verbatim.
+function runSlashCommand(text: string): boolean {
+  if (!text.startsWith('/')) {
+    return false;
+  }
+  const name = text.split(/\s+/, 1)[0].toLowerCase();
+  const cmd = SLASH_COMMANDS.find((c) => c.name === name);
+  if (cmd) {
+    inputEl.value = '';
+    autoGrow();
+    cmd.run();
+    return true;
+  }
+  addSysChip(`Unknown command "${name}". Type /help to see what's available.`);
+  inputEl.value = '';
+  autoGrow();
+  return true;
+}
+
+// ---------------------------------------------------------------------------
 // Sending
 // ---------------------------------------------------------------------------
 function onSend(): void {
+  if (state.compacting) {
+    return; // input is blocked while a /compact runs
+  }
   if (state.busy) {
     post({ type: 'abort' });
     return;
   }
   const text = inputEl.value.trim();
   if (!text && !state.pendingImages.length) {
+    return;
+  }
+  if (runSlashCommand(text)) {
     return;
   }
   if (!state.lmStudioConnected) {
@@ -409,6 +679,7 @@ function onSend(): void {
   state.pendingImages = [];
   renderThumbs();
   autoGrow();
+  autoScrollEnabled = true; // a new turn follows the response, even if scrolled up before
   post({
     type: 'send',
     text,
@@ -510,18 +781,32 @@ function renderModelMenu(): void {
     const row = document.createElement('div');
     row.className = 'model-row' + (m.id === state.currentModel ? ' active' : '');
     const loading = state.loadingModels.has(m.id);
-    const badges = `${m.vision ? '👁 ' : ''}${m.toolUse ? '🔧' : ''}`.trim();
+    const caps = [
+      m.vision ? `<span class="model-cap" title="Vision">${icon.eye}</span>` : '',
+      m.toolUse ? `<span class="model-cap" title="Tool use">${icon.wrench}</span>` : '',
+    ].join('');
     const ctx = m.loaded
       ? `${formatTokens(m.contextLength || 0)} / ${formatTokens(m.maxContextLength || 0)}`
       : `max ${formatTokens(m.maxContextLength || 0)}`;
+    // Identity line: publisher / format / quant — the fields that tell apart
+    // same-named models. Only shown when present.
+    const ident = modelIdentity(m);
+    // Disambiguate the name itself when it isn't unique in the list.
+    const tag = modelDisambiguator(m, state.models);
+    // An id tag is long and case-sensitive; a publisher tag is a short label.
+    const tagIsId = tag === m.id;
+    const nameTag = tag
+      ? `<span class="model-name">${escapeHtml(m.name)}</span><span class="model-pub-tag${tagIsId ? ' id' : ''}">${escapeHtml(tag)}</span>`
+      : `<span class="model-name">${escapeHtml(m.name)}</span>`;
     row.innerHTML = `
       <span class="model-dot${m.loaded ? ' loaded' : ''}"></span>
       <span class="model-info">
-        <span class="model-name">${escapeHtml(m.name)}</span>
-        <span class="model-meta">${m.loaded ? 'loaded · ' : ''}${ctx}${badges ? ' · ' + badges : ''}</span>
+        <span class="model-name-row">${nameTag}</span>
+        ${ident ? `<span class="model-ident">${escapeHtml(ident)}</span>` : ''}
+        <span class="model-meta">${m.loaded ? 'loaded · ' : ''}${ctx}${caps ? ' · <span class="model-caps">' + caps + '</span>' : ''}</span>
       </span>
-      <button class="model-action ${loading ? 'busy' : m.loaded ? 'eject' : 'load'}" ${loading ? 'disabled' : ''}>
-        ${loading ? 'Working…' : m.loaded ? 'Eject' : 'Load'}
+      <button class="model-action ${loading ? 'busy' : m.loaded ? 'eject' : 'load'}" aria-busy="${loading}">
+        ${loading ? `${icon.spinner}<span>${m.loaded ? 'Ejecting…' : 'Loading…'}</span>` : m.loaded ? 'Eject' : 'Load'}
       </button>`;
     // Row click selects the model as active.
     row.addEventListener('click', () => {
@@ -746,14 +1031,23 @@ function renderMeter(): void {
   ctxMeterEl.classList.toggle('warn', pct >= 70 && pct < 90);
   ctxMeterEl.classList.toggle('crit', pct >= 90);
   const winLabel = win ? formatTokens(win) : '—';
-  let label = `${estimated ? '~' : ''}${formatTokens(used)} / ${winLabel} context · ${Math.round(pct)}%`;
-  if (state.compacted) {
-    label += ' · compacted';
+  let label: string;
+  if (state.pendingCompaction) {
+    // The reduced size only becomes known on the next real turn (the summarizer
+    // turn reports no usable usage), so don't show a number we can't measure.
+    label = `compacted · updates on next message / ${winLabel} context`;
+  } else {
+    label = `${estimated ? '~' : ''}${formatTokens(used)} / ${winLabel} context · ${Math.round(pct)}%`;
+    if (state.compacted) {
+      label += ' · compacted';
+    }
   }
   ctxLabelEl.textContent = label;
-  ctxMeterEl.title = estimated
-    ? 'Estimated context usage (includes the agent system prompt + tools). LM Studio does not report exact token usage to OpenCode.'
-    : 'Context window usage';
+  ctxMeterEl.title = state.pendingCompaction
+    ? 'Conversation was compacted. The exact reduced size shows after your next message.'
+    : estimated
+      ? 'Estimated context usage (includes the agent system prompt + tools). LM Studio does not report exact token usage to OpenCode.'
+      : 'Context window usage';
 }
 
 // ---------------------------------------------------------------------------
@@ -765,6 +1059,12 @@ function clearConversation(): void {
   roleByMessage.clear();
   permissionEls.clear();
   questionEls.clear();
+  compaction.suppressed.clear();
+  compaction.pending = false;
+  lastCompactionChip = null;
+  state.pendingCompaction = false;
+  todoCards.clear();
+  todoCollapsed.clear();
   hideWorking();
   messagesEl
     .querySelectorAll('.msg, .perm-card, .question-card, .sys-chip, .error-bubble')
@@ -772,6 +1072,7 @@ function clearConversation(): void {
   state.realTokens = 0;
   state.compacted = false;
   lastErrorText = '';
+  autoScrollEnabled = true; // fresh conversation starts pinned to the bottom
   toggleWelcome();
 }
 
@@ -872,8 +1173,40 @@ function enhanceCode(container: HTMLElement): void {
 }
 
 function upsertPart(part: Part): void {
+  // A compaction marker: collapse it to a chip and mark the summarizer turn
+  // that follows for suppression. Handle before ensureMessageEl so the marker's
+  // own (user) message never produces an empty bubble.
+  if (isCompactionPart(part.type)) {
+    markCompaction(compaction, part.messageID);
+    showCompactionChip();
+    return;
+  }
+  // Synthetic text is OpenCode's own context injection — the attached file's
+  // contents, tool-call framing ("Called the Read tool with…"), etc. It is sent
+  // to the model but was never typed by the user, so it must not render as a
+  // chat bubble. The visible affordance for an attachment is its file chip.
+  if (isSyntheticText(part)) {
+    return;
+  }
   const role = roleByMessage.get(part.messageID) ?? 'assistant';
+  // The first assistant turn after a compaction marker is the summarizer
+  // generating the summary — suppress it (its reasoning + template aren't chat).
+  if (shouldSuppressMessage(compaction, part.messageID, role)) {
+    return; // summarizer-internal output; never render as a chat turn
+  }
   const { partsEl } = ensureMessageEl(part.messageID, role);
+  // The agent's todo list (todowrite) renders as one live checklist per turn,
+  // not a generic JSON tool card. Route it here and return BEFORE partState so
+  // it never enters partState (no meter inflation) and never duplicates.
+  if (part.type === 'tool' && (part as { tool?: string }).tool === 'todowrite') {
+    if (role !== 'user' && state.busy) {
+      setWorkingLabel('Updating plan…');
+    }
+    renderTodos(part as Part & { messageID: string; state?: any }, partsEl);
+    renderMeter();
+    scrollToBottom();
+    return;
+  }
   if (role !== 'user' && state.busy) {
     if (part.type === 'reasoning') {
       setWorkingLabel('Thinking…');
@@ -922,8 +1255,18 @@ function upsertPart(part: Part): void {
       }
       break;
     }
-    case 'step-start':
     case 'step-finish':
+      // `reason: 'length'` means the model hit its output-token budget mid-turn
+      // (common with reasoning models that think at length). Remember it so the
+      // turn-end handler can tell the user it was truncated rather than just
+      // stopping silently — which reads like a freeze/crash.
+      if ((part as { reason?: string }).reason === 'length') {
+        turnTruncated = true;
+      }
+      ps.el.remove();
+      partState.delete(part.id);
+      break;
+    case 'step-start':
     case 'snapshot':
     case 'patch':
       ps.el.remove();
@@ -1002,6 +1345,68 @@ function renderTool(el: HTMLElement, part: { tool: string; state: any }, partId:
 }
 
 // ---------------------------------------------------------------------------
+// Todo checklist (the agent's todowrite tool)
+// ---------------------------------------------------------------------------
+// Render/replace the single live checklist for this assistant message. Each
+// todowrite call carries the full list (replace semantics), so we just rewrite
+// one card's contents in place.
+function renderTodos(part: { messageID: string; state?: any }, partsEl: HTMLElement): void {
+  const mid = part.messageID;
+  const todos: Todo[] = Array.isArray(part.state?.input?.todos) ? part.state.input.todos : [];
+  let card = todoCards.get(mid);
+  if (!todos.length) {
+    // Empty / pre-input call: don't leave an empty card flashing.
+    card?.remove();
+    todoCards.delete(mid);
+    return;
+  }
+  if (!card) {
+    card = document.createElement('div');
+    card.className = 'part part-todo';
+    partsEl.appendChild(card); // append only on first create → updates mutate in place
+    todoCards.set(mid, card);
+  }
+  card.innerHTML = buildTodoHtml(todos, mid);
+  const head = card.querySelector('.tool-head') as HTMLElement | null;
+  const inner = card.querySelector('.todo-card') as HTMLElement | null;
+  head?.addEventListener('click', () => {
+    const nowCollapsed = !inner?.classList.contains('collapsed');
+    inner?.classList.toggle('collapsed', nowCollapsed);
+    todoCollapsed.set(mid, nowCollapsed); // user choice overrides the auto rule
+  });
+}
+
+function buildTodoHtml(todos: Todo[], mid: string): string {
+  const { done, total, anyInProgress, allDone, cardStatus, currentLabel } = summarizeTodos(todos);
+  const collapsed = isTodoCardCollapsed(anyInProgress, todoCollapsed.get(mid));
+  const mark = (s: Todo['status']): string =>
+    s === 'in_progress'
+      ? icon.spinner
+      : s === 'completed'
+        ? '✓'
+        : s === 'cancelled'
+          ? '⊘'
+          : '▢';
+  const rows = todos
+    .map(
+      (t) =>
+        `<div class="todo-item is-${t.status}"><span class="todo-mark">${mark(t.status)}</span><span class="todo-text">${escapeHtml(t.content)}</span></div>`,
+    )
+    .join('');
+  return `
+    <div class="tool-card todo-card status-${cardStatus}${collapsed ? ' collapsed' : ''}">
+      <button class="tool-head" type="button">
+        <span class="tool-chev"></span>
+        <span class="tool-ico">${icon.checklist}</span>
+        <span class="tool-name">Plan</span>
+        <span class="todo-current">${escapeHtml(currentLabel)}</span>
+        <span class="todo-count">${done}/${total}${allDone ? ' ✓' : ''}</span>
+      </button>
+      <div class="tool-body todo-list">${rows}</div>
+    </div>`;
+}
+
+// ---------------------------------------------------------------------------
 // Permissions
 // ---------------------------------------------------------------------------
 function renderPermission(req: any): void {
@@ -1035,7 +1440,7 @@ function renderPermission(req: any): void {
   messagesEl.appendChild(card);
   permissionEls.set(req.id, card);
   toggleWelcome();
-  scrollToBottom();
+  forceScrollToBottom(); // a permission prompt must be visible to be actioned
 }
 
 function resolvePermission(id: string): void {
@@ -1201,7 +1606,7 @@ function renderQuestion(requestID: string | null, questions: QInfo[]): void {
     syncChrome();
     const input = panels[active].querySelector('.question-custom') as HTMLInputElement | null;
     input?.focus();
-    scrollToBottom();
+    forceScrollToBottom(); // user navigated between question pages — keep it in view
   }
 
   backBtn?.addEventListener('click', () => show(active - 1));
@@ -1252,7 +1657,7 @@ function renderQuestion(requestID: string | null, questions: QInfo[]): void {
   questionEls.set(key, card);
   syncChrome();
   toggleWelcome();
-  scrollToBottom();
+  forceScrollToBottom(); // a question prompt must be visible to be answered
 }
 
 function resolveQuestion(id: string): void {
@@ -1320,13 +1725,48 @@ function setBusy(busy: boolean): void {
   sendBtn.classList.toggle('busy', busy);
   if (busy) {
     lastErrorText = ''; // new turn — allow a fresh error to surface
+    turnTruncated = false; // fresh turn — clear any prior truncation flag
     showWorking('Working…');
   } else {
     hideWorking();
   }
 }
 
+// Block the composer while a /compact runs. Unlike a normal turn (where the send
+// button becomes an abort), compaction can't be interrupted, so we disable the
+// input + send entirely and show a distinct indicator. Model/server pickers stay
+// usable. On completion the meter enters "pending" mode (true size unknown until
+// the next turn) — see renderMeter().
+function setCompacting(active: boolean): void {
+  state.compacting = active;
+  inputEl.disabled = active;
+  sendBtn.disabled = active;
+  document.body.classList.toggle('compacting', active);
+  if (active) {
+    lastErrorText = '';
+    showWorking('Compacting conversation…');
+  } else {
+    hideWorking();
+    state.pendingCompaction = true; // size now stale until the next real turn lands
+    state.compacted = true;
+    renderMeter();
+  }
+}
+
+// Pin to the bottom only if the user hasn't scrolled up. Used for streamed
+// tokens and incremental part updates so reading back mid-generation works.
 function scrollToBottom(): void {
+  if (!autoScrollEnabled) {
+    return;
+  }
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+// Force the view to the bottom and re-engage autoscroll. Used when the user
+// just did something that should bring them back (sent a message, new session)
+// or when a card needs to be visible to be actionable (permission, question).
+function forceScrollToBottom(): void {
+  autoScrollEnabled = true;
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
@@ -1400,6 +1840,27 @@ function renderConversation(messages: MessageWithParts[]): void {
   let lastUsed = 0;
   for (const m of messages) {
     roleByMessage.set(m.info.id, m.info.role);
+    // Mirror the live path: a message carrying a compaction marker collapses to
+    // a chip, and the summarizer turn that follows it is suppressed.
+    if (m.parts.some((part) => isCompactionPart(part.type))) {
+      markCompaction(compaction, m.info.id);
+      showCompactionChip();
+      continue;
+    }
+    if (shouldSuppressMessage(compaction, m.info.id, m.info.role)) {
+      // Recover the summary text from the suppressed summarizer turn so the
+      // chip stays expandable after a reload (the live path gets it from the
+      // bridge instead).
+      const summary = m.parts
+        .filter((part) => part.type === 'text')
+        .map((part) => (part as { text?: string }).text ?? '')
+        .join('')
+        .trim();
+      if (summary) {
+        attachCompactionSummary(summary);
+      }
+      continue; // summarizer-internal turn — not chat
+    }
     ensureMessageEl(m.info.id, m.info.role);
     for (const part of m.parts) {
       upsertPart(part);
@@ -1417,7 +1878,7 @@ function renderConversation(messages: MessageWithParts[]): void {
   state.realTokens = lastUsed;
   renderMeter();
   toggleWelcome();
-  scrollToBottom();
+  forceScrollToBottom(); // full (re)render of a session lands the user at the bottom
 }
 
 // ---------------------------------------------------------------------------
@@ -1430,12 +1891,24 @@ function handleEvent(event: OpencodeEvent): void {
       const info = p.info;
       if (info?.id) {
         roleByMessage.set(info.id, info.role);
+        // The summarizer turn that follows a compaction marker isn't a chat
+        // turn — don't materialize a bubble or count its tokens.
+        if (shouldSuppressMessage(compaction, info.id, info.role)) {
+          break;
+        }
         ensureMessageEl(info.id, info.role);
-        if (info.role === 'assistant' && info.tokens) {
-          const used = tokensUsed(info.tokens);
-          if (used > 0) {
-            state.realTokens = used;
-            state.compacted = false;
+        if (info.role === 'assistant') {
+          // A real assistant turn after compaction has begun (the summarizer
+          // turn was suppressed above), so the post-compaction state is now
+          // current. Clear the "pending" flag even when LM Studio reports no
+          // token usage — otherwise the meter sticks on "compacted" forever.
+          state.pendingCompaction = false;
+          if (info.tokens) {
+            const used = tokensUsed(info.tokens);
+            if (used > 0) {
+              state.realTokens = used;
+              state.compacted = false;
+            }
           }
           renderMeter();
         }
@@ -1479,6 +1952,14 @@ function handleEvent(event: OpencodeEvent): void {
     case 'session.idle':
       setBusy(false);
       renderMeter();
+      if (turnTruncated) {
+        // The turn ended because it ran out of output budget, not because the
+        // model was done. Say so — otherwise a cut-off reply looks like a freeze.
+        addSysChip(
+          '⚠ Response was cut off — it reached the output token limit. Raise the context window (it scales the output budget) or ask the model to be more concise.',
+        );
+        turnTruncated = false;
+      }
       break;
     case 'session.error': {
       showError(humanizeError(p.error, { subject: 'LM Studio' }));
@@ -1542,6 +2023,12 @@ window.addEventListener('message', (e: MessageEvent<HostToWebview>) => {
       break;
     case 'busy':
       setBusy(msg.busy);
+      break;
+    case 'compacting':
+      setCompacting(msg.active);
+      if (!msg.active && msg.summary) {
+        attachCompactionSummary(msg.summary);
+      }
       break;
     case 'activeFile':
       state.activeFile = msg.path ? { path: msg.path, chars: msg.chars } : null;

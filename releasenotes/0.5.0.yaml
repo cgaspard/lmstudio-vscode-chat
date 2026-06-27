@@ -1,0 +1,22 @@
+version: 0.5.0
+date: 2026-06-27
+highlights:
+  - Slash commands in the chat box — type `/` for `/clear`, `/compact`, `/file`, and `/help`, with an autocomplete menu.
+  - The agent's todo list now renders as a live checklist (one card per turn, updating in place) instead of a raw JSON dump.
+  - The model picker tells apart same-named models by publisher, format (MLX/GGUF), and quantization.
+added:
+  - Slash commands `/clear` (new chat), `/compact` (summarize the conversation to free up context), `/file` (toggle the open file as context), and `/help`, with a filterable autocomplete menu and keyboard navigation.
+  - Live todo checklist for the agent's task list — a single card per turn with per-item status (pending, in progress with a spinner, completed, cancelled), a progress count, and an expandable view.
+  - Model picker now shows each model's publisher, runtime format (MLX/GGUF), and quantization, and disambiguates models that share a name.
+  - `/compact` shows the summary the model produced (expandable) and blocks input while it runs; the context meter shows a pending state until the next message reports the reduced size.
+removed: []
+changed:
+  - Raised the per-response output token budget (8192 to up to 32768, scaled to the context window) so reasoning models that think at length aren't cut off mid-answer.
+  - The model list is now built from LM Studio's canonical models endpoint, removing a duplicate row that previously appeared for the loaded model.
+  - Replaced the colored capability emoji in the model list with flat, monochrome icons that read clearly against the panel.
+fixed:
+  - Scrolling back through the chat while a response is streaming no longer snaps you to the bottom on every token.
+  - Attaching the open file no longer dumps the file's contents into the chat as if you had typed them — it shows a file chip instead.
+  - Ejecting a loaded model now works reliably (and shows a spinner while loading or unloading) instead of silently doing nothing.
+  - A response that hits the output token limit now shows a clear "cut off" notice instead of stopping with no explanation.
+  - The conversation summary produced by compaction no longer leaks the model's internal reasoning and template into the chat.

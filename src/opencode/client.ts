@@ -74,6 +74,16 @@ export class OpencodeClient {
     await this.req('POST', `/session/${sessionID}/abort`, {});
   }
 
+  /**
+   * Compact the conversation in place via AI summarization — the same operation
+   * OpenCode's TUI runs for `/compact`. `providerID`/`modelID` are required by
+   * the server (v1 `POST /session/{id}/summarize`). Progress surfaces over the
+   * event stream as a `session.compacted` event, so this returns once accepted.
+   */
+  async summarize(sessionID: string, providerID: string, modelID: string): Promise<void> {
+    await this.req('POST', `/session/${sessionID}/summarize`, { providerID, modelID });
+  }
+
   /** Fire-and-forget prompt; the response streams over the event channel. */
   async promptAsync(sessionID: string, body: PromptBody): Promise<void> {
     await this.req('POST', `/session/${sessionID}/prompt_async`, body);

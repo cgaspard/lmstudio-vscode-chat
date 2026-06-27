@@ -9,6 +9,9 @@ export interface UiModel {
   maxContextLength?: number;
   toolUse?: boolean;
   vision?: boolean;
+  publisher?: string; // disambiguates same-named models (e.g. unsloth vs lmstudio-community)
+  quantization?: string; // e.g. "8bit", "Q8_0"
+  format?: string; // runtime format, e.g. "MLX" or "GGUF"
 }
 
 export interface UiSession {
@@ -42,6 +45,9 @@ export type HostToWebview =
   | { type: 'cleared' }
   | { type: 'event'; event: OpencodeEvent }
   | { type: 'busy'; busy: boolean }
+  // A /compact run is in flight (block input) or has finished (with the summary
+  // text, if OpenCode produced one). `summary` is only set when done === true.
+  | { type: 'compacting'; active: boolean; summary?: string }
   | { type: 'activeFile'; path: string | null; chars: number }
   | { type: 'status'; text: string; kind?: 'info' | 'warn' | 'error' }
   | { type: 'command'; command: 'history' | 'newChat' | 'focusInput' }
@@ -73,6 +79,7 @@ export type WebviewToHost =
   | { type: 'loadSession'; sessionID: string }
   | { type: 'deleteSession'; sessionID: string }
   | { type: 'clearAllSessions' }
+  | { type: 'compact' }
   | { type: 'abort' }
   | { type: 'permission'; sessionID: string; permissionID: string; response: PermissionResponse }
   | { type: 'questionReply'; requestID: string; answers: string[][] }

@@ -285,6 +285,9 @@ export class ChatBridge {
         case 'clearAllSessions':
           await this.clearAllSessions();
           break;
+        case 'compact':
+          await this.compactSession();
+          break;
         case 'abort':
           if (this.currentSessionID) {
             await this.client?.abort(this.currentSessionID);
@@ -531,6 +534,9 @@ export class ChatBridge {
       maxContextLength: m.maxContextLength,
       toolUse: m.toolUse,
       vision: m.vision,
+      publisher: m.publisher,
+      quantization: m.quantization,
+      format: m.format,
     }));
     return this.lastModels;
   }
@@ -576,6 +582,66 @@ export class ChatBridge {
     this.post({ type: 'cleared' });
     this.post({ type: 'status', text: '' });
     await this.sendSessions();
+  }
+
+  /**
+   * Compact the current conversation via OpenCode's summarize endpoint — the
+   * `/compact` slash command. Blocks input for the duration (`compacting`),
+   * then hands the webview the summary text OpenCode produced so it can be shown
+   * in the compaction chip. The reduced token count only lands on the next real
+   * turn (the summarizer turn reports no usable usage), so we don't fake it here.
+   */
+  private async compactSession(): Promise<void> {
+    if (!this.client || !this.currentSessionID) {
+      this.post({ type: 'status', text: 'Nothing to compact yet.', kind: 'warn' });
+      return;
+    }
+    if (!this.currentModel) {
+      this.post({ type: 'status', text: 'Select a model before compacting.', kind: 'warn' });
+      return;
+    }
+    this.post({ type: 'compacting', active: true });
+    this.post({ type: 'status', text: 'Compacting conversation…' });
+    let summary = '';
+    try {
+      await this.client.summarize(this.currentSessionID, 'lmstudio', this.currentModel);
+      summary = await this.latestSummary(this.currentSessionID);
+    } finally {
+      // Always release the input, even if summarize threw (onMessage's catch
+      // surfaces the error). A stuck "compacting" lock would be worse.
+      this.post({ type: 'compacting', active: false, summary });
+      this.post({ type: 'status', text: '' });
+    }
+  }
+
+  /**
+   * The summary text from the most recent compaction: the assistant turn that
+   * immediately follows a `compaction`-part message. Empty string if none found.
+   */
+  private async latestSummary(sessionID: string): Promise<string> {
+    try {
+      const messages = await this.client!.getMessages(sessionID);
+      let pending = false;
+      let summary = '';
+      for (const m of messages) {
+        const isMarker = (m.parts ?? []).some((part) => part.type === 'compaction');
+        if (isMarker) {
+          pending = true;
+          continue;
+        }
+        if (pending && m.info.role === 'assistant') {
+          summary = (m.parts ?? [])
+            .filter((part): part is Extract<typeof part, { type: 'text' }> => part.type === 'text')
+            .map((part) => (part as { text?: string }).text ?? '')
+            .join('')
+            .trim();
+          pending = false;
+        }
+      }
+      return summary;
+    } catch {
+      return '';
+    }
   }
 
   private async loadSession(sessionID: string): Promise<void> {

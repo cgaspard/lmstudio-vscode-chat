@@ -421,6 +421,79 @@ body {
   color: var(--vscode-descriptionForeground);
 }
 
+/* the agent's todo list (todowrite) — a live checklist, reusing tool-card chrome
+   so collapse + chevron rotation come for free */
+.todo-card .tool-name {
+  color: var(--accent);
+}
+.todo-current {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--vscode-descriptionForeground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11.5px;
+}
+.todo-count {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+  color: var(--vscode-descriptionForeground);
+  font-weight: 600;
+}
+.todo-list {
+  padding: 4px 0;
+}
+.todo-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 3px 10px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.todo-mark {
+  flex: 0 0 auto;
+  width: 14px;
+  text-align: center;
+  font-weight: 700;
+  display: inline-flex;
+  justify-content: center;
+}
+.todo-mark .spin {
+  width: 12px;
+  height: 12px;
+}
+.todo-text {
+  flex: 1 1 auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.todo-item.is-completed .todo-mark {
+  color: var(--vscode-testing-iconPassed, #4ec07a);
+}
+.todo-item.is-completed .todo-text {
+  color: var(--vscode-descriptionForeground);
+  text-decoration: line-through;
+}
+.todo-item.is-in_progress .todo-mark {
+  color: var(--accent);
+}
+.todo-item.is-in_progress .todo-text {
+  font-weight: 600;
+}
+.todo-item.is-pending .todo-mark {
+  color: var(--vscode-descriptionForeground);
+}
+.todo-item.is-cancelled .todo-mark {
+  color: var(--vscode-testing-iconFailed, #e35d6a);
+}
+.todo-item.is-cancelled .todo-text {
+  color: var(--vscode-descriptionForeground);
+  text-decoration: line-through;
+  opacity: 0.7;
+}
+
 .file-chip {
   display: inline-flex;
   align-items: center;
@@ -765,6 +838,7 @@ body {
   padding: 6px 10px 12px;
 }
 .composer-box {
+  position: relative;
   background: var(--vscode-input-background);
   border: 1px solid var(--vscode-input-border, rgba(128, 128, 128, 0.28));
   border-radius: 14px;
@@ -974,8 +1048,45 @@ body {
   min-width: 0;
   flex: 1;
 }
+.model-name-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
 .model-name {
   font-size: 12.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* disambiguator pill shown next to the name when two models share a name */
+.model-pub-tag {
+  flex: 0 1 auto;
+  min-width: 0;
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--vscode-badge-background, rgba(108, 92, 231, 0.25));
+  color: var(--vscode-badge-foreground, var(--vscode-foreground));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* when the disambiguator is a full model id, keep it readable (no upper-case,
+   monospace, can shrink with ellipsis) */
+.model-pub-tag.id {
+  text-transform: none;
+  letter-spacing: 0;
+  font-family: var(--vscode-editor-font-family, monospace);
+}
+/* identity line: publisher · format · quant */
+.model-ident {
+  font-size: 10px;
+  color: var(--vscode-descriptionForeground);
+  opacity: 0.85;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1007,8 +1118,36 @@ body {
   color: var(--vscode-errorForeground, #e35d6a);
 }
 .model-action.busy {
-  opacity: 0.6;
+  opacity: 0.85;
   cursor: default;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+/* flat, monochrome capability glyphs (vision / tool use) in the model meta */
+.model-caps {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  vertical-align: middle;
+}
+.model-cap {
+  display: inline-flex;
+  align-items: center;
+  color: var(--vscode-descriptionForeground);
+  opacity: 0.85;
+}
+.model-cap svg {
+  display: block;
+}
+/* spinner used for in-flight load/unload */
+.spin {
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 .model-dot.err {
   background: var(--vscode-errorForeground, #e35d6a);
@@ -1323,4 +1462,132 @@ body.hide-reasoning .part-reasoning {
 }
 .history-del:hover {
   color: var(--vscode-errorForeground, #e35d6a);
+}
+
+/* slash-command autocomplete (anchored above the input) */
+.slash-menu {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: calc(100% + 6px);
+  z-index: 30;
+  background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+  border: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
+  border-radius: 10px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
+  padding: 4px;
+  max-height: 40vh;
+  overflow-y: auto;
+}
+.slash-menu.hidden {
+  display: none;
+}
+.slash-item {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 6px 9px;
+  border-radius: 7px;
+  cursor: pointer;
+}
+.slash-item.active,
+.slash-item:hover {
+  background: var(--vscode-list-activeSelectionBackground, rgba(128, 128, 128, 0.18));
+}
+.slash-name {
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 12.5px;
+  color: var(--vscode-foreground);
+}
+.slash-hint {
+  font-size: 11.5px;
+  color: var(--vscode-descriptionForeground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* inline note from the extension UI itself (e.g. /help, command feedback) */
+.sys-chip {
+  align-self: center;
+  max-width: 92%;
+  border: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.3));
+  background: var(--vscode-textBlockQuote-background, rgba(128, 128, 128, 0.08));
+  color: var(--vscode-descriptionForeground);
+  border-radius: 8px;
+  padding: 7px 11px;
+  margin: 4px 0;
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+/* marks where the conversation was compacted — quiet, centered divider that
+   expands to reveal the summary OpenCode produced */
+.compaction-chip {
+  border-style: dashed;
+  background: transparent;
+  font-size: 11.5px;
+  white-space: normal;
+  padding: 0;
+  overflow: hidden;
+}
+.compaction-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  background: none;
+  border: none;
+  color: var(--vscode-descriptionForeground);
+  font: inherit;
+  font-size: 11.5px;
+  text-align: left;
+  padding: 7px 11px;
+  cursor: pointer;
+  opacity: 0.75;
+}
+.compaction-head:disabled {
+  cursor: default;
+}
+.compaction-head:not(:disabled):hover {
+  opacity: 1;
+}
+.compaction-chev {
+  width: 0;
+  height: 0;
+  border-left: 5px solid currentColor;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  transition: transform 0.12s ease;
+  flex: 0 0 auto;
+}
+.compaction-head:disabled .compaction-chev {
+  visibility: hidden;
+}
+.compaction-chip.open .compaction-chev {
+  transform: rotate(90deg);
+}
+.compaction-body {
+  display: none;
+  padding: 0 12px 10px;
+  font-size: 12px;
+  color: var(--vscode-foreground);
+  border-top: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.25));
+  text-align: left;
+}
+.compaction-chip.open .compaction-body {
+  display: block;
+}
+.compaction-body :first-child {
+  margin-top: 8px;
+}
+
+/* input + send are locked while a /compact runs (via the disabled attribute);
+   dim them so the locked state reads clearly. Model/server pickers stay usable. */
+body.compacting #input,
+body.compacting .send-btn {
+  opacity: 0.5;
+}
+#input:disabled,
+.send-btn:disabled {
+  cursor: not-allowed;
 }
