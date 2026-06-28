@@ -2,6 +2,11 @@ const esbuild = require('esbuild');
 
 const production = process.argv.includes('--production');
 const watch = process.argv.includes('--watch');
+// Test-only seams (the webview test hook) are guarded by `__TEST__`.
+// Non-production builds enable it so integration tests can drive the webview;
+// production sets it false so esbuild dead-code-eliminates the hook — nothing
+// test-related ships in the Marketplace bundle.
+const testHook = !production;
 
 /** Shared options */
 const common = {
@@ -10,6 +15,7 @@ const common = {
   sourcemap: !production,
   sourcesContent: false,
   logLevel: 'info',
+  define: { __TEST__: JSON.stringify(testHook) },
 };
 
 /** Extension host bundle (Node / CommonJS) */

@@ -2,7 +2,7 @@
   "name": "lmstudio-code",
   "displayName": "LM Studio Code",
   "description": "Agentic coding panel for your local LM Studio models. A Claude Code / Codex–style chat experience powered by the open-source OpenCode agent, running entirely against your local models.",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "publisher": "cgaspard",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -182,16 +182,22 @@
     "package:vsix": "vsce package",
     "package:vsix:bundled": "npm run bundle:opencode && vsce package --target ${VSCE_TARGET:-$(node -p \"process.platform+'-'+process.arch\")}",
     "test": "npm run check-types:test && node esbuild.test.js && node --test \"out-test/**/*.test.js\"",
-    "test:watch": "node esbuild.test.js && node --test --watch \"out-test/**/*.test.js\""
+    "test:watch": "node esbuild.test.js && node --test --watch \"out-test/**/*.test.js\"",
+    "compile:integration": "tsc -p tsconfig.integration.json",
+    "test:integration": "npm run compile && npm run compile:integration && node out-integration/test-integration/runTests.js"
   },
   "dependencies": {
     "marked": "^12.0.0"
   },
   "devDependencies": {
+    "@types/mocha": "^10.0.10",
     "@types/node": "^20.11.0",
     "@types/vscode": "^1.104.0",
+    "@vscode/test-electron": "^3.0.0",
     "@vscode/vsce": "^3.7.1",
     "esbuild": "^0.20.0",
+    "glob": "^13.0.6",
+    "mocha": "^11.7.6",
     "typescript": "^5.3.0"
   }
 }

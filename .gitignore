@@ -6,3 +6,5 @@ out-test/
 .DS_Store
 # Bundled OpenCode binary is fetched at package time, never committed.
 bin/
+out-integration/
+.vscode-test/

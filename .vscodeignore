@@ -23,3 +23,7 @@ media/lmstudio-logo.svg
 media/screenshots/**
 releasenotes/**
 sample-workspace/**
+out-integration/**
+test-integration/**
+tsconfig.integration.json
+.vscode-test/**

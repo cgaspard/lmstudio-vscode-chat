@@ -1,0 +1,13 @@
+version: 0.5.2
+date: 2026-06-28
+highlights:
+  - Clicking Load on a model now also selects it as the active model, and the picker closes once the load finishes.
+  - Responses show an estimated generation speed (tokens/sec) live while streaming and as a summary when they finish.
+added:
+  - Generation-speed readout — the working indicator shows a live "~N tok/s" while a response streams, and a "~N tokens · Xs · ~N tok/s" line appears under the finished reply. (Estimated from the response length, since LM Studio does not report exact token usage.)
+  - An integration test harness (headless VS Code via @vscode/test-electron) that drives and inspects the real chat webview, so UI behavior is covered by automated tests.
+removed: []
+changed:
+  - Loading a model from the picker selects it as the active model (you loaded it to use it); ejecting leaves your current selection alone.
+  - The model picker now closes automatically once a load you started completes, instead of staying open.
+fixed: []

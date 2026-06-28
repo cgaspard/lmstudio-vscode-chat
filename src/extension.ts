@@ -5,7 +5,12 @@ import { LMStudioClient } from './lmstudio/client';
 import { initLogger, log, showLogs } from './logger';
 import { OpencodeServerManager } from './opencode/serverManager';
 import { BridgeDeps } from './panel/bridge';
+import { attachTestWebview, registerTestCommands } from './test-integration/testHook';
 import { ChatViewProvider, openChatPanel } from './panel/chatViewProvider';
+
+// Injected by esbuild `define`: true in test builds, false (dead-code-stripped)
+// in production.
+declare const __TEST__: boolean;
 
 let server: OpencodeServerManager | undefined;
 
@@ -91,6 +96,19 @@ export function activate(context: vscode.ExtensionContext): void {
       }
     }),
   );
+
+  // Integration-test seam (stripped from production builds via __TEST__).
+  // Opens a chat panel on demand and exposes it to the test commands so the
+  // suite can drive + inspect the live webview.
+  if (__TEST__) {
+    registerTestCommands(context);
+    context.subscriptions.push(
+      vscode.commands.registerCommand('lmstudioCode._test.openPanel', () => {
+        const panel = openChatPanel(context.extensionUri, deps);
+        attachTestWebview(panel.webview);
+      }),
+    );
+  }
 }
 
 export function deactivate(): void {

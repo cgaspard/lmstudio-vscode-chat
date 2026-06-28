@@ -20,6 +20,9 @@ declare function acquireVsCodeApi(): {
   getState(): unknown;
   setState(s: unknown): void;
 };
+// Injected by esbuild `define`: true in test builds, false in production (where
+// the test hook below is then dead-code-eliminated).
+declare const __TEST__: boolean;
 
 const vscode = acquireVsCodeApi();
 function post(msg: WebviewToHost): void {
@@ -89,6 +92,12 @@ const todoCards = new Map<string, HTMLElement>(); // messageID -> checklist card
 const todoCollapsed = new Map<string, boolean>(); // messageID -> user-forced collapse (unset = auto)
 let lastErrorText = ''; // dedup repeated error bubbles within a turn
 let turnTruncated = false; // the current turn hit its output-token budget (finish reason 'length')
+let closeMenuOnLoad = false; // user hit Load from the menu — close it once the load returns
+// Generation-speed tracking. LM Studio reports no token usage to OpenCode, so we
+// estimate from the streamed output ourselves: count characters (text+reasoning)
+// and divide an estimated token count (chars/4) by our own elapsed time.
+let turnOutputChars = 0; // streamed output chars this turn
+let turnFirstTokenAt = 0; // when the first output token arrived (Date.now), for an accurate rate
 // Compaction bookkeeping. OpenCode's summarize ("/compact") writes a user
 // message with a `compaction` part, then streams the summarizer model's own
 // reasoning + the summary template as an ordinary assistant turn. Neither is a
@@ -816,12 +825,19 @@ function renderModelMenu(): void {
       renderMeter();
       closeModelMenu();
     });
-    // Action button loads / ejects without selecting.
+    // Action button loads / ejects. Loading also makes the model active (you
+    // loaded it to use it); ejecting leaves the current selection alone.
     const action = row.querySelector('.model-action') as HTMLButtonElement;
     action.addEventListener('click', (e) => {
       e.stopPropagation();
       if (loading) {
         return;
+      }
+      if (!m.loaded) {
+        state.currentModel = m.id;
+        post({ type: 'selectModel', modelID: m.id });
+        renderMeter();
+        closeMenuOnLoad = true; // dismiss the menu once this load completes
       }
       state.loadingModels.add(m.id);
       post({ type: m.loaded ? 'unloadModel' : 'loadModel', modelID: m.id });
@@ -1288,9 +1304,32 @@ function appendDelta(partID: string, field: string, delta: string): void {
   if (!ps) {
     return;
   }
+  // Count streamed output for the generation-speed estimate. Stamp the first
+  // token so the rate measures generation, not the prompt-processing wait.
+  if (delta && (ps.type === 'text' || ps.type === 'reasoning')) {
+    if (!turnFirstTokenAt) {
+      turnFirstTokenAt = Date.now();
+    }
+    turnOutputChars += delta.length;
+  }
   ps.buffer += delta;
   renderTextLike(ps);
   scrollToBottom();
+}
+
+// Estimated generation rate for the current turn, or null if not measurable yet.
+// Tokens are estimated as chars/4 (LM Studio reports no exact usage); the rate is
+// over the time since the first token (excludes prompt-processing latency).
+function currentGenRate(): { tokens: number; seconds: number; tps: number } | null {
+  if (!turnFirstTokenAt || turnOutputChars <= 0) {
+    return null;
+  }
+  const seconds = (Date.now() - turnFirstTokenAt) / 1000;
+  const tokens = Math.round(turnOutputChars / 4);
+  if (seconds <= 0) {
+    return null;
+  }
+  return { tokens, seconds, tps: tokens / seconds };
 }
 
 function renderTool(el: HTMLElement, part: { tool: string; state: any }, partId: string): void {
@@ -1681,7 +1720,15 @@ function showWorking(label = 'Working…'): void {
   }
   workingTimer = setInterval(() => {
     const s = Math.floor((Date.now() - workingStart) / 1000);
-    workingElapsedEl.textContent = s > 0 ? `${s}s` : '';
+    const rate = currentGenRate();
+    const parts = [];
+    if (s > 0) {
+      parts.push(`${s}s`);
+    }
+    if (rate && rate.tps >= 0.5) {
+      parts.push(`~${Math.round(rate.tps)} tok/s`);
+    }
+    workingElapsedEl.textContent = parts.join(' · ');
   }, 1000);
 }
 function setWorkingLabel(label: string): void {
@@ -1695,6 +1742,27 @@ function hideWorking(): void {
     clearInterval(workingTimer);
     workingTimer = undefined;
   }
+}
+
+// Append a small estimated generation-speed stat under the just-finished
+// assistant turn (e.g. "~340 tokens · 7.5s · ~45 tok/s"). No-op when there's
+// nothing measurable (e.g. a tool-only turn with no streamed text).
+function appendGenStat(): void {
+  const rate = currentGenRate();
+  if (!rate || rate.tokens < 1) {
+    return;
+  }
+  const msgs = messagesEl.querySelectorAll('.msg.assistant');
+  const last = msgs[msgs.length - 1] as HTMLElement | undefined;
+  if (!last || last.querySelector('.gen-stat')) {
+    return;
+  }
+  const el = document.createElement('div');
+  el.className = 'gen-stat';
+  el.textContent = `~${rate.tokens} tokens · ${rate.seconds.toFixed(1)}s · ~${Math.round(rate.tps)} tok/s`;
+  el.title =
+    'Estimated from the response length — LM Studio does not report exact token usage to OpenCode.';
+  last.appendChild(el);
 }
 
 function showError(message: string): void {
@@ -1726,6 +1794,8 @@ function setBusy(busy: boolean): void {
   if (busy) {
     lastErrorText = ''; // new turn — allow a fresh error to surface
     turnTruncated = false; // fresh turn — clear any prior truncation flag
+    turnOutputChars = 0; // reset generation-speed tracking for the new turn
+    turnFirstTokenAt = 0;
     showWorking('Working…');
   } else {
     hideWorking();
@@ -1950,6 +2020,8 @@ function handleEvent(event: OpencodeEvent): void {
       resolveQuestion(p.requestID ?? p.id);
       break;
     case 'session.idle':
+      // Capture the generation rate before setBusy(false) clears the counters.
+      appendGenStat();
       setBusy(false);
       renderMeter();
       if (turnTruncated) {
@@ -2004,6 +2076,11 @@ window.addEventListener('message', (e: MessageEvent<HostToWebview>) => {
       state.loadingModels.clear();
       renderModels();
       renderMeter();
+      if (closeMenuOnLoad) {
+        // A load the user kicked off from the menu has returned — dismiss it.
+        closeMenuOnLoad = false;
+        closeModelMenu();
+      }
       break;
     case 'sessions':
       state.sessions = msg.sessions;
@@ -2055,7 +2132,50 @@ window.addEventListener('message', (e: MessageEvent<HostToWebview>) => {
 });
 
 // ---------------------------------------------------------------------------
+// Test hook (stripped from production by esbuild — see __TEST__ define)
+// ---------------------------------------------------------------------------
+// Lets integration tests drive + inspect the webview over the postMessage
+// channel: { __test__: 'query', id, selector, prop } reads an element's text or
+// attribute; { __test__: 'click', id, selector } dispatches a real click. The
+// result is posted back as { __test__: 'result', id, ... }. No eval is exposed.
+function installTestHook(): void {
+  window.addEventListener('message', (e: MessageEvent<any>) => {
+    const m = e.data;
+    if (!m || m.__test__ === undefined || m.__test__ === 'result') {
+      return;
+    }
+    const reply = (payload: Record<string, unknown>) =>
+      vscode.postMessage({ __test__: 'result', id: m.id, ...payload } as never);
+    try {
+      if (m.__test__ === 'query') {
+        const els = Array.from(document.querySelectorAll(m.selector as string));
+        const read = (el: Element) =>
+          m.prop === 'text'
+            ? (el.textContent ?? '').trim()
+            : m.prop === 'class'
+              ? el.className
+              : el.getAttribute(m.prop as string);
+        reply({ count: els.length, value: els[0] ? read(els[0]) : null, values: els.map(read) });
+      } else if (m.__test__ === 'click') {
+        const el = document.querySelector(m.selector as string) as HTMLElement | null;
+        if (el) {
+          el.click();
+        }
+        reply({ ok: !!el });
+      } else {
+        reply({ error: `unknown __test__ op: ${m.__test__}` });
+      }
+    } catch (err) {
+      reply({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Boot
 // ---------------------------------------------------------------------------
 build();
+if (__TEST__) {
+  installTestHook();
+}
 post({ type: 'ready' });
