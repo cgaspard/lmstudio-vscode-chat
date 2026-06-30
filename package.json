@@ -2,7 +2,7 @@
   "name": "lmstudio-code",
   "displayName": "LM Studio Code",
   "description": "Agentic coding panel for your local LM Studio models. A Claude Code / Codex–style chat experience powered by the open-source OpenCode agent, running entirely against your local models.",
-  "version": "0.5.2",
+  "version": "0.6.0",
   "publisher": "cgaspard",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -167,6 +167,66 @@
           "type": "string",
           "default": "max",
           "description": "GPU offload ratio passed to 'lms load' when reloading a model for context (off | max | 0..1)."
+        },
+        "lmstudioCode.mcpServers": {
+          "type": "object",
+          "default": {},
+          "markdownDescription": "MCP (Model Context Protocol) servers to make available to the agent, as a map of `name → server`. Each server is either a local (stdio) command or a remote (http/sse) URL.\n\nServers configured for **Claude Code** (`.mcp.json` at the workspace root) and **VS Code Copilot** (`.vscode/mcp.json` and the user `mcp` setting) are also discovered automatically — use this setting to add servers specific to LM Studio Code, or to override a discovered one. Entries here take precedence on a name collision.\n\nLocal (stdio) example:\n```json\n{\n  \"playwright\": { \"command\": \"npx\", \"args\": [\"-y\", \"@playwright/mcp@latest\"] }\n}\n```\nRemote (http/sse) example:\n```json\n{\n  \"docs\": { \"type\": \"http\", \"url\": \"https://example.com/mcp\", \"headers\": { \"Authorization\": \"Bearer ${MY_TOKEN}\" } }\n}\n```\n`${VAR}` references are resolved from the environment before launch. Set `\"enabled\": false` to keep a server defined but off. Note: each MCP server adds its tool schemas to the model's context, which is limited on local models — enable only what you need.",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "local",
+                  "stdio",
+                  "remote",
+                  "http",
+                  "sse"
+                ],
+                "description": "Transport. Local/stdio runs a command; remote/http/sse connects to a URL. Inferred from the fields when omitted."
+              },
+              "command": {
+                "type": [
+                  "string",
+                  "array"
+                ],
+                "items": {
+                  "type": "string"
+                },
+                "description": "Executable to run for a local server (string), with arguments in 'args'."
+              },
+              "args": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Arguments passed to the local server command."
+              },
+              "env": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "description": "Environment variables for a local server. Values may use ${VAR} references."
+              },
+              "url": {
+                "type": "string",
+                "description": "Endpoint URL for a remote server."
+              },
+              "headers": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "description": "HTTP headers for a remote server. Values may use ${VAR} references (e.g. an API token)."
+              },
+              "enabled": {
+                "type": "boolean",
+                "description": "Set false to keep the server defined but not started."
+              }
+            }
+          }
         }
       }
     }

@@ -89,7 +89,13 @@ export function activate(context: vscode.ExtensionContext): void {
       if (
         e.affectsConfiguration('lmstudioCode.lmStudioBaseUrl') ||
         e.affectsConfiguration('lmstudioCode.opencodePath') ||
-        e.affectsConfiguration('lmstudioCode.serverPort')
+        e.affectsConfiguration('lmstudioCode.serverPort') ||
+        // MCP servers are baked into the injected config at spawn time, so a
+        // change to ours — or VS Code's shared `mcp` setting — needs a respawn
+        // to take effect. (On-disk .mcp.json / .vscode/mcp.json edits are picked
+        // up by the "Restart OpenCode Server" command.)
+        e.affectsConfiguration('lmstudioCode.mcpServers') ||
+        e.affectsConfiguration('mcp')
       ) {
         log('relevant configuration changed; restarting server on next use');
         server?.dispose();

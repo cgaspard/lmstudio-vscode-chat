@@ -6,8 +6,10 @@ import * as vscode from 'vscode';
 import { ExtensionConfig, getConfig } from '../config';
 import { resolveBinaryPath } from '../core/binary';
 import { clampContext } from '../core/context';
+import { augmentedPath } from '../core/mcp';
 import { LMStudioClient } from '../lmstudio/client';
 import { log, logError } from '../logger';
+import { discoverMcpServers } from '../mcp/discovery';
 import { OpencodeClient } from './client';
 import { BUILD_PROMPT, PLAN_PROMPT } from './prompts';
 
@@ -218,6 +220,11 @@ export class OpencodeServerManager {
       ...process.env,
       OPENCODE_CONFIG_CONTENT: configContent,
       NO_COLOR: '1',
+      // Augment PATH so stdio MCP servers (command: ["npx"/"uvx"/...]) can be
+      // spawned even when the extension host was launched from a GUI context
+      // with a minimal PATH (the #1 reason npx-based MCP servers fail to start).
+      // Existing entries are kept first so a user's own toolchain still wins.
+      PATH: augmentedPath(process.env.PATH, os.homedir(), path.delimiter),
       // Sandbox all on-disk state to our managed dir.
       XDG_DATA_HOME: sub('data'),
       XDG_CONFIG_HOME: sub('config'),
@@ -256,6 +263,18 @@ export class OpencodeServerManager {
     } catch (err) {
       logError('could not enumerate LM Studio models for config', err);
     }
+    // MCP servers discovered from .mcp.json / .vscode/mcp.json / VS Code user
+    // settings / our own `lmstudioCode.mcpServers`. Tokens like ${VAR} are
+    // already resolved to literals (OPENCODE_CONFIG_CONTENT is not substituted
+    // by OpenCode), so what we inject is ready to spawn as-is. Their tools flow
+    // through OpenCode's existing tool-call + permission machinery for free.
+    let mcp: ReturnType<typeof discoverMcpServers>['map'] = {};
+    try {
+      mcp = discoverMcpServers().map;
+    } catch (err) {
+      logError('could not discover MCP servers', err);
+    }
+
     // Override the build/plan agent prompts so the model identifies as
     // "LM Studio Code" instead of OpenCode's built-in "You are opencode…".
     const config = {
@@ -277,6 +296,7 @@ export class OpencodeServerManager {
           ...(Object.keys(models).length ? { models } : {}),
         },
       },
+      ...(Object.keys(mcp).length ? { mcp } : {}),
     };
     return JSON.stringify(config);
   }

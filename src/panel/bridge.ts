@@ -10,6 +10,7 @@ import { ConnectResult, SelfHealer } from '../core/reconnect';
 import { deriveTitle } from '../core/title';
 import { LMStudioClient } from '../lmstudio/client';
 import { log, logError } from '../logger';
+import { discoverMcpServers } from '../mcp/discovery';
 import { OpencodeClient } from '../opencode/client';
 import { OpencodeEvent, PromptBody } from '../opencode/protocol';
 import { Disposable, OpencodeServerManager } from '../opencode/serverManager';
@@ -42,6 +43,7 @@ export class ChatBridge {
   private connecting = false;
   private currentTitle = '';
   private agentsWarned = false;
+  private mcpWarned = false;
   private activeFile: { abs: string; rel: string; chars: number } | null = null;
   private editorSub: vscode.Disposable | undefined;
   private messageSub: vscode.Disposable | undefined;
@@ -404,6 +406,7 @@ export class ChatBridge {
     }
     this.updateActiveFile(vscode.window.activeTextEditor);
     this.warnIfAgentsLarge();
+    this.warnIfMcpEnabled();
     // Clean connect — clear any reconnect backoff held by the healer.
     this.healer.noteConnected();
     this.post({ type: 'status', text: '' });
@@ -443,6 +446,35 @@ export class ChatBridge {
       const over = estTokens >= win;
       vscode.window.showWarningMessage(
         `LM Studio Code: ${found.join(' + ')} is ~${Math.round(estTokens / 1000)}k tokens (~${pct}% of your ${Math.round(win / 1000)}k context)${over ? ' — larger than the context window' : ''}. It's auto-included on every request and may crowd out the conversation. Consider trimming it or raising lmstudioCode.minContextLength.`,
+      );
+    }
+  }
+
+  /**
+   * Warn once per session when MCP servers are active. Each server's tool
+   * schemas are added to every request, which on a small local context window
+   * (~32k, ~11k already spent on the agent system prompt + built-in tools) can
+   * crowd out the conversation. This mirrors warnIfAgentsLarge()'s one-shot
+   * advisory rather than blocking anything.
+   */
+  private warnIfMcpEnabled(): void {
+    if (this.mcpWarned) {
+      return;
+    }
+    let count = 0;
+    try {
+      count = discoverMcpServers().enabledCount;
+    } catch (err) {
+      logError('mcp discovery for warning', err);
+      return;
+    }
+    if (count === 0) {
+      return;
+    }
+    this.mcpWarned = true;
+    if (count >= 3) {
+      vscode.window.showWarningMessage(
+        `LM Studio Code: ${count} MCP servers are enabled. Their tool schemas are added to every request and may crowd out a small local context window — disable the ones you don't need, or raise lmstudioCode.minContextLength.`,
       );
     }
   }

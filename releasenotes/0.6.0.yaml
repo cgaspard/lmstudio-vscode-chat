@@ -1,0 +1,15 @@
+version: 0.6.0
+date: 2026-06-29
+highlights:
+  - MCP (Model Context Protocol) server support — extend the agent with external tools.
+  - Servers you already configured for Claude Code or VS Code are picked up automatically.
+added:
+  - MCP servers — the agent can now call tools from local (stdio) and remote (http/sse) MCP servers, surfaced as the same tool cards and permission prompts as built-in tools.
+  - Auto-discovery — servers from .mcp.json (Claude Code), .vscode/mcp.json, and VS Code's user mcp setting are merged in automatically, with nothing to re-enter.
+  - New lmstudioCode.mcpServers setting to add servers specific to LM Studio Code; it takes precedence on a name collision and accepts both Claude Code and VS Code field shapes.
+  - ${VAR} references in MCP env values and remote headers are resolved from the environment before launch (e.g. an API token), since inline config is not token-substituted.
+  - PATH is augmented with common install locations (Homebrew, ~/.local/bin, nvm/fnm, bun, cargo) so npx/uvx-based MCP servers start even when VS Code was launched from a GUI.
+changed:
+  - The OpenCode server now restarts automatically when MCP settings change so edits take effect; .mcp.json / .vscode/mcp.json file edits apply on the next server restart or window reload.
+fixed: []
+removed: []
