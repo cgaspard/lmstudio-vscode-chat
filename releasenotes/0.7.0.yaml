@@ -1,0 +1,12 @@
+version: 0.7.0
+date: 2026-06-29
+highlights:
+  - New /mcp command — see your MCP servers and their live connection status right in the chat.
+added:
+  - /mcp slash command — lists each configured MCP server with a status dot (connected / disabled / failed), its transport (local/remote), and the command or URL it was configured with; a failed server shows why and never blocks the chat.
+  - Sample workspace now ships a .mcp.json so you can try MCP and the /mcp panel out of the box.
+  - Expanded MCP setup docs in the README — how to write .mcp.json / .vscode/mcp.json, the full list of supported fields, and the transports supported.
+changed:
+  - Removed the startup notification that warned when several MCP servers were enabled; the /mcp panel now surfaces server state on demand instead.
+fixed: []
+removed: []

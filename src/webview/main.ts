@@ -13,7 +13,7 @@ import { modelDisambiguator, modelIdentity } from '../core/models';
 import { isTodoCardCollapsed, summarizeTodos, Todo } from '../core/todos';
 import { buildAnswers, isEmptyAnswer, parseQuestionBlob, QInfo } from '../core/question';
 import type { MessageWithParts, OpencodeEvent, Part } from '../opencode/protocol';
-import type { HostToWebview, UiImage, UiModel, UiServer, UiSession, WebviewToHost } from '../shared';
+import type { HostToWebview, UiImage, UiMcpServer, UiModel, UiServer, UiSession, WebviewToHost } from '../shared';
 
 declare function acquireVsCodeApi(): {
   postMessage(msg: unknown): void;
@@ -481,6 +481,7 @@ const SLASH_COMMANDS: SlashCommand[] = [
   { name: '/clear', hint: 'Clear the conversation and start fresh', run: clearChatCommand },
   { name: '/compact', hint: 'Summarize the conversation to free up context', run: compactCommand },
   { name: '/file', hint: 'Toggle including the open file as context', run: toggleFileCommand },
+  { name: '/mcp', hint: 'Show connected MCP servers and their status', run: mcpCommand },
   { name: '/help', hint: 'List the available slash commands', run: helpCommand },
 ];
 
@@ -504,9 +505,81 @@ function toggleFileCommand(): void {
   addSysChip(`Open file ${state.includeActiveFile ? 'included in' : 'excluded from'} context.`);
 }
 
+// Request the live MCP server status from the host. The result arrives as an
+// `mcpStatus` message and is rendered by showMcpStatus() into a status chip.
+function mcpCommand(): void {
+  addSysChip('Checking MCP servers…');
+  post({ type: 'requestMcpStatus' });
+}
+
 function helpCommand(): void {
   const lines = SLASH_COMMANDS.map((c) => `${c.name} — ${c.hint}`).join('\n');
   addSysChip(`Slash commands:\n${lines}`);
+}
+
+// Render the MCP server status as an inline panel in the message stream — one
+// row per server with a colored status dot, transport label, and (for failures)
+// the error reason. Mirrors how Claude Code's /mcp prints into the conversation.
+function showMcpStatus(servers: UiMcpServer[]): void {
+  const el = document.createElement('div');
+  el.className = 'sys-chip mcp-panel';
+
+  if (!servers.length) {
+    el.innerHTML =
+      '<div class="mcp-head">MCP servers</div>' +
+      '<div class="mcp-empty">No MCP servers configured. Add one in the <code>lmstudioCode.mcpServers</code> setting, ' +
+      'or a <code>.mcp.json</code> / <code>.vscode/mcp.json</code> file in your workspace.</div>';
+    messagesEl.appendChild(el);
+    toggleWelcome();
+    forceScrollToBottom();
+    return;
+  }
+
+  const connected = servers.filter((s) => s.status === 'connected').length;
+  const rows = servers
+    .map((s) => {
+      const dot = mcpStatusClass(s.status);
+      const transport = s.transport
+        ? `<span class="mcp-transport">${s.transport === 'remote' ? 'remote' : 'local'}</span>`
+        : '';
+      const detail = s.detail ? `<div class="mcp-detail">${escapeHtml(s.detail)}</div>` : '';
+      const error =
+        s.status === 'failed' && s.error
+          ? `<div class="mcp-error">${escapeHtml(s.error)}</div>`
+          : '';
+      return (
+        `<div class="mcp-row">` +
+        `<span class="mcp-dot ${dot}"></span>` +
+        `<div class="mcp-row-body">` +
+        `<div class="mcp-row-top"><span class="mcp-name">${escapeHtml(s.name)}</span>${transport}` +
+        `<span class="mcp-status-label ${dot}">${escapeHtml(s.status)}</span></div>` +
+        detail +
+        error +
+        `</div></div>`
+      );
+    })
+    .join('');
+
+  el.innerHTML =
+    `<div class="mcp-head">MCP servers <span class="mcp-count">${connected}/${servers.length} connected</span></div>` +
+    `<div class="mcp-list">${rows}</div>`;
+  messagesEl.appendChild(el);
+  toggleWelcome();
+  forceScrollToBottom();
+}
+
+// Map an MCP status string to the dot/label color class.
+function mcpStatusClass(status: string): string {
+  switch (status) {
+    case 'connected':
+      return 'ok';
+    case 'failed':
+      return 'err';
+    case 'disabled':
+      return 'off';
+    default:
+      return 'pending';
+  }
 }
 
 // Marks where the conversation was compacted. Rendered in place of the noisy
@@ -2123,6 +2196,9 @@ window.addEventListener('message', (e: MessageEvent<HostToWebview>) => {
       } else if (msg.command === 'focusInput') {
         inputEl.focus();
       }
+      break;
+    case 'mcpStatus':
+      showMcpStatus(msg.servers);
       break;
     case 'error':
       showError(msg.message);

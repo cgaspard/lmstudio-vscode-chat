@@ -1621,6 +1621,110 @@ body.hide-reasoning .part-reasoning {
   margin-top: 8px;
 }
 
+/* /mcp status panel — an inline list of MCP servers with a colored status dot,
+   transport tag, and (on failure) the error reason. Left-aligned, full-width
+   within the sys-chip; reuses the chip frame so it sits naturally in the stream. */
+.mcp-panel {
+  white-space: normal;
+  text-align: left;
+  max-width: 92%;
+  width: 92%;
+  padding: 10px 12px;
+}
+.mcp-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--vscode-foreground);
+  margin-bottom: 9px;
+}
+.mcp-count {
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--vscode-descriptionForeground);
+  font-variant-numeric: tabular-nums;
+}
+.mcp-empty {
+  font-size: 12px;
+  color: var(--vscode-descriptionForeground);
+  line-height: 1.5;
+}
+.mcp-empty code {
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 0.92em;
+}
+.mcp-list {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+.mcp-row {
+  display: grid;
+  grid-template-columns: 12px 1fr;
+  gap: 9px;
+  align-items: start;
+}
+.mcp-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-top: 5px;
+  flex: 0 0 auto;
+  background: var(--vscode-descriptionForeground);
+}
+.mcp-dot.ok { background: var(--vscode-charts-green, #4ec9a8); box-shadow: 0 0 6px var(--vscode-charts-green, rgba(78, 201, 168, 0.6)); }
+.mcp-dot.err { background: var(--vscode-charts-red, #e06b6b); }
+.mcp-dot.off { background: var(--vscode-charts-yellow, #e0b250); }
+.mcp-dot.pending { background: var(--vscode-descriptionForeground); }
+.mcp-row-body { min-width: 0; }
+.mcp-row-top {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.mcp-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--vscode-foreground);
+}
+.mcp-transport {
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--vscode-descriptionForeground);
+  border: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.3));
+  border-radius: 4px;
+  padding: 0 5px;
+}
+.mcp-status-label {
+  margin-left: auto;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--vscode-descriptionForeground);
+}
+.mcp-status-label.ok { color: var(--vscode-charts-green, #4ec9a8); }
+.mcp-status-label.err { color: var(--vscode-charts-red, #e06b6b); }
+.mcp-status-label.off { color: var(--vscode-charts-yellow, #e0b250); }
+.mcp-detail {
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+  margin-top: 2px;
+  word-break: break-all;
+}
+.mcp-error {
+  font-size: 11.5px;
+  color: var(--vscode-charts-red, #e06b6b);
+  margin-top: 3px;
+  line-height: 1.45;
+}
+
 /* input + send are locked while a /compact runs (via the disabled attribute);
    dim them so the locked state reads clearly. Model/server pickers stay usable. */
 body.compacting #input,

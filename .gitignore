@@ -8,3 +8,6 @@ out-test/
 bin/
 out-integration/
 .vscode-test/
+
+# Playwright MCP run artifacts (created when testing the sample)
+.playwright-mcp/

@@ -1,5 +1,6 @@
 import { log, logError } from '../logger';
 import {
+  McpStatusResponse,
   MessageWithParts,
   OpencodeEvent,
   PermissionResponse,
@@ -44,6 +45,15 @@ export class OpencodeClient {
 
   async listProviders(): Promise<ProvidersResponse> {
     return this.req('GET', '/config/providers');
+  }
+
+  /**
+   * Live status of the configured MCP servers (`GET /mcp`): a map of server
+   * name -> { status, error? }. Used by the `/mcp` panel so the user can see
+   * which servers connected, which are disabled, and why a failed one failed.
+   */
+  async listMcp(): Promise<McpStatusResponse> {
+    return this.req('GET', '/mcp');
   }
 
   async createSession(title?: string): Promise<Session> {

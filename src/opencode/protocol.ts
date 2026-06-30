@@ -28,6 +28,22 @@ export interface ProvidersResponse {
   default: Record<string, string>;
 }
 
+// ---- MCP status ----------------------------------------------------------
+// `GET /mcp` returns a map of server name -> live connection state. Observed
+// shapes from OpenCode 1.16.x: { status: 'connected' | 'disabled' | 'failed',
+// error?: string }. We keep it loose so an added field never breaks parsing.
+
+export type McpServerStatus = 'connected' | 'disabled' | 'failed' | 'pending' | string;
+
+export interface McpServerState {
+  status: McpServerStatus;
+  error?: string;
+  [k: string]: unknown;
+}
+
+/** Map of MCP server name -> its current connection state. */
+export type McpStatusResponse = Record<string, McpServerState>;
+
 // ---- Message parts -------------------------------------------------------
 
 export interface TextPart {
