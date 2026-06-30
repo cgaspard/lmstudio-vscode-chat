@@ -772,7 +772,9 @@ function updateSlashMenu(): void {
     const row = document.createElement('div');
     row.className = `slash-item${i === slashActiveIndex ? ' active' : ''}`;
     const badge = cmd.server?.source === 'skill' ? '<span class="slash-badge">skill</span>' : '';
-    row.innerHTML = `<span class="slash-name">${escapeHtml(cmd.name)}${badge}</span><span class="slash-hint">${escapeHtml(cmd.hint)}</span>`;
+    row.innerHTML =
+      `<span class="slash-left"><span class="slash-name">${escapeHtml(cmd.name)}</span>${badge}</span>` +
+      `<span class="slash-hint">${escapeHtml(cmd.hint)}</span>`;
     row.addEventListener('mousedown', (e) => {
       e.preventDefault(); // keep focus in the textarea
       acceptSlashCommand(cmd);

@@ -1,0 +1,9 @@
+version: 0.8.1
+date: 2026-06-30
+highlights:
+  - Cleaner slash-command menu — command names and descriptions now line up in tidy columns instead of cramming together.
+added: []
+changed: []
+fixed:
+  - The slash-command menu no longer cramps long command names — names stay on one line (truncating with an ellipsis when needed), the 'skill' badge stays inline, and every description aligns in its own column for easy scanning.
+removed: []

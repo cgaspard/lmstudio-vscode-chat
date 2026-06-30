@@ -2,7 +2,7 @@
   "name": "lmstudio-code",
   "displayName": "LM Studio Code",
   "description": "Agentic coding panel for your local LM Studio models. A Claude Code / Codex–style chat experience powered by the open-source OpenCode agent, running entirely against your local models.",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "publisher": "cgaspard",
   "license": "MIT",
   "icon": "media/icon.png",

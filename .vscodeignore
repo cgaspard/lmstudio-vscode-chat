@@ -27,3 +27,5 @@ out-integration/**
 test-integration/**
 tsconfig.integration.json
 .vscode-test/**
+
+.playwright-mcp/**
