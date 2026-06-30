@@ -2,7 +2,7 @@
   "name": "lmstudio-code",
   "displayName": "LM Studio Code",
   "description": "Agentic coding panel for your local LM Studio models. A Claude Code / Codex–style chat experience powered by the open-source OpenCode agent, running entirely against your local models.",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "publisher": "cgaspard",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -102,25 +102,6 @@
         "title": "LM Studio Code: Focus Chat"
       }
     ],
-    "menus": {
-      "view/title": [
-        {
-          "command": "lmstudioCode.newChat",
-          "when": "view == lmstudioCode.chat || view == lmstudioCode.chatSecondary",
-          "group": "navigation@1"
-        },
-        {
-          "command": "lmstudioCode.history",
-          "when": "view == lmstudioCode.chat || view == lmstudioCode.chatSecondary",
-          "group": "navigation@2"
-        },
-        {
-          "command": "lmstudioCode.openInTab",
-          "when": "view == lmstudioCode.chat || view == lmstudioCode.chatSecondary",
-          "group": "navigation@3"
-        }
-      ]
-    },
     "configuration": {
       "title": "LM Studio Code",
       "properties": {

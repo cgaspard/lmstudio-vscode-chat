@@ -7,13 +7,14 @@ import {
   newCompactionState,
   shouldSuppressMessage,
 } from '../core/compaction';
+import { matchSlashPrefix, mergeSlashCommands, parseSlashInput } from '../core/commands';
 import { computeWindow, contextPresets, formatTokens } from '../core/context';
 import { humanizeError } from '../core/errors';
 import { modelDisambiguator, modelIdentity } from '../core/models';
 import { isTodoCardCollapsed, summarizeTodos, Todo } from '../core/todos';
 import { buildAnswers, isEmptyAnswer, parseQuestionBlob, QInfo } from '../core/question';
 import type { MessageWithParts, OpencodeEvent, Part } from '../opencode/protocol';
-import type { HostToWebview, UiImage, UiMcpServer, UiModel, UiServer, UiSession, WebviewToHost } from '../shared';
+import type { HostToWebview, UiCommand, UiImage, UiMcpServer, UiModel, UiServer, UiSession, UiSkill, WebviewToHost } from '../shared';
 
 declare function acquireVsCodeApi(): {
   postMessage(msg: unknown): void;
@@ -53,6 +54,7 @@ interface State {
   activeServerId: string;
   activeFile: { path: string; chars: number } | null;
   includeActiveFile: boolean;
+  activeSelection: { path: string; startLine: number; endLine: number; chars: number } | null;
 }
 const persisted = (vscode.getState() as { thinking?: boolean; includeActiveFile?: boolean }) ?? {};
 const state: State = {
@@ -76,6 +78,7 @@ const state: State = {
   activeServerId: '',
   activeFile: null,
   includeActiveFile: persisted.includeActiveFile ?? true,
+  activeSelection: null,
 };
 
 // Live rendering bookkeeping (keyed by ids so events and history both upsert).
@@ -112,6 +115,7 @@ let lastCompactionChip: HTMLElement | null = null; // so the summary can be atta
 const icon = {
   plus: `<svg viewBox="0 0 16 16" width="16" height="16"><path fill="currentColor" d="M8.5 2.5v5h5v1h-5v5h-1v-5h-5v-1h5v-5z"/></svg>`,
   history: `<svg viewBox="0 0 16 16" width="16" height="16"><path fill="currentColor" d="M8 1.5a6.5 6.5 0 1 0 6.5 6.5h-1A5.5 5.5 0 1 1 8 2.5V1.5zM7.5 4v4.2l3.1 1.8.5-.86L8.5 7.7V4z"/><path fill="currentColor" d="M8 1.5 5.4 3.2 8 4.9z"/></svg>`,
+  window: `<svg viewBox="0 0 16 16" width="15" height="15"><path fill="none" stroke="currentColor" stroke-width="1.2" d="M2.6 3.5h10.8a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H2.6a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1z"/><path fill="currentColor" d="M1.6 5.4h12.8v1H1.6z"/></svg>`,
   send: `<svg viewBox="0 0 16 16" width="16" height="16"><path fill="currentColor" d="M1.7 14.3 15 8 1.7 1.7l-.2 4.8L10 8l-8.5 1.5z"/></svg>`,
   stop: `<svg viewBox="0 0 16 16" width="14" height="14"><rect x="3" y="3" width="10" height="10" rx="1.5" fill="currentColor"/></svg>`,
   trash: `<svg viewBox="0 0 16 16" width="14" height="14"><path fill="currentColor" d="M6 1.5h4l.5 1H14v1H2v-1h3.5zM3.5 4.5h9l-.7 9.2a1 1 0 0 1-1 .8H5.2a1 1 0 0 1-1-.8z"/></svg>`,
@@ -153,6 +157,7 @@ let serverMenuList!: HTMLElement;
 let connBanner!: HTMLElement;
 let ctxFileBtn!: HTMLButtonElement;
 let ctxFileName!: HTMLElement;
+let attachmentsEl!: HTMLElement;
 let agentSelect!: HTMLSelectElement;
 let statusEl!: HTMLElement;
 let historyOverlay!: HTMLElement;
@@ -172,6 +177,11 @@ let workingTimer: ReturnType<typeof setInterval> | undefined;
 function build(): void {
   const app = document.getElementById('app')!;
   app.innerHTML = `
+    <div id="titlebar-actions" class="titlebar-actions">
+      <button id="ta-new" class="ta-btn" title="New chat">${icon.plus}</button>
+      <button id="ta-history" class="ta-btn" title="Session history">${icon.history}</button>
+      <button id="ta-tab" class="ta-btn" title="Open chat in editor tab">${icon.window}</button>
+    </div>
     <div id="conn-banner" class="conn-banner hidden"></div>
     <div id="messages" class="messages">
       <div id="welcome" class="welcome">
@@ -194,7 +204,9 @@ function build(): void {
     <div class="composer">
       <div class="composer-box">
         <div id="slash-menu" class="slash-menu hidden"></div>
-        <div id="thumbs" class="thumbs"></div>
+        <div id="attachments" class="attachments hidden">
+          <div id="thumbs" class="thumbs"></div>
+        </div>
         <textarea id="input" rows="1" placeholder="Ask anything, paste an image, or describe a task…"></textarea>
         <div class="composer-row">
           <div class="composer-tools">
@@ -203,7 +215,8 @@ function build(): void {
             </button>
             <button id="btn-attach" class="tool-pill icon-only" title="Attach image">${icon.paperclip}</button>
             <button id="btn-think" class="tool-pill" title="Toggle thinking">${icon.brain}<span>Thinking</span></button>
-            <button id="ctxfile" class="tool-pill ctxfile hidden" title="Include the open file as context">${icon.file}<span id="ctxfile-name"></span></button>
+            <span class="tool-sep"></span>
+            <button id="ctxfile" class="ctxref hidden" title="Include the open file as context">${icon.file}<span id="ctxfile-name"></span></button>
           </div>
           <div class="composer-right">
             <button id="model-btn" class="model-btn" title="Model — load / eject">
@@ -277,6 +290,7 @@ function build(): void {
   connBanner = document.getElementById('conn-banner')!;
   ctxFileBtn = document.getElementById('ctxfile') as HTMLButtonElement;
   ctxFileName = document.getElementById('ctxfile-name')!;
+  attachmentsEl = document.getElementById('attachments')!;
   agentSelect = document.getElementById('agent-select') as HTMLSelectElement;
   statusEl = document.getElementById('status')!;
   historyOverlay = document.getElementById('history-overlay')!;
@@ -290,6 +304,11 @@ function build(): void {
   workingEl = document.getElementById('working')!;
   workingLabelEl = workingEl.querySelector('.working-label') as HTMLElement;
   workingElapsedEl = workingEl.querySelector('.working-elapsed') as HTMLElement;
+
+  // Floating top-right actions (mirror the old native title-bar buttons).
+  document.getElementById('ta-new')!.addEventListener('click', () => post({ type: 'newChat' }));
+  document.getElementById('ta-history')!.addEventListener('click', () => openHistory());
+  document.getElementById('ta-tab')!.addEventListener('click', () => post({ type: 'openInTab' }));
 
   document.getElementById('history-close')!.addEventListener('click', closeHistory);
   const clearBtn = document.getElementById('history-clear') as HTMLButtonElement;
@@ -452,6 +471,10 @@ function build(): void {
   });
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
+      if (document.getElementById('lightbox')) {
+        closeLightbox();
+        return;
+      }
       closeModelMenu();
       closeServerMenu();
     }
@@ -474,16 +497,41 @@ function autoGrow(): void {
 interface SlashCommand {
   name: string;
   hint: string;
-  run: () => void;
+  /** Local UI commands run a callback; server commands carry their kind here. */
+  run?: () => void;
+  /** Set for server-provided commands/skills (invoked via runCommand). */
+  server?: { command: string; source: 'command' | 'skill'; takesArgs: boolean };
 }
 
-const SLASH_COMMANDS: SlashCommand[] = [
+// Built-in UI commands (handled entirely in the webview/host, not the model).
+const LOCAL_COMMANDS: SlashCommand[] = [
   { name: '/clear', hint: 'Clear the conversation and start fresh', run: clearChatCommand },
   { name: '/compact', hint: 'Summarize the conversation to free up context', run: compactCommand },
   { name: '/file', hint: 'Toggle including the open file as context', run: toggleFileCommand },
   { name: '/mcp', hint: 'Show connected MCP servers and their status', run: mcpCommand },
+  { name: '/skills', hint: 'Show the skills available to the model', run: skillsCommand },
   { name: '/help', hint: 'List the available slash commands', run: helpCommand },
 ];
+
+// Server-provided commands + skills (from GET /command), populated on connect.
+let serverCommands: SlashCommand[] = [];
+
+// The full slash list: local UI commands first, then server commands/skills,
+// de-duplicated by name (a local command wins over a server one of the same
+// name, e.g. our /compact).
+function allCommands(): SlashCommand[] {
+  // Merge + dedupe is pure — see core/commands. A local command of the same
+  // name wins over a server one.
+  return mergeSlashCommands(LOCAL_COMMANDS, serverCommands);
+}
+
+function setServerCommands(cmds: UiCommand[]): void {
+  serverCommands = cmds.map((c) => ({
+    name: '/' + c.name,
+    hint: c.description || (c.source === 'skill' ? 'Skill' : 'Command'),
+    server: { command: c.name, source: c.source, takesArgs: c.takesArgs },
+  }));
+}
 
 function clearChatCommand(): void {
   post({ type: 'clearAllSessions' });
@@ -512,8 +560,64 @@ function mcpCommand(): void {
   post({ type: 'requestMcpStatus' });
 }
 
+// Request the discovered skills from the host (GET /skill). Rendered by
+// showSkills() so the user can confirm their project/global skills are found.
+function skillsCommand(): void {
+  addSysChip('Checking skills…');
+  post({ type: 'requestSkills' });
+}
+
+// Render the discovered skills as an inline panel — one row per skill with its
+// name, a source tag (project / global / built-in), a 'slash' badge when it can
+// be invoked as a command, and its description. Reuses the /mcp panel styling.
+function showSkills(skills: UiSkill[]): void {
+  const el = document.createElement('div');
+  el.className = 'sys-chip mcp-panel';
+
+  if (!skills.length) {
+    el.innerHTML =
+      '<div class="mcp-head">Skills</div>' +
+      '<div class="mcp-empty">No skills found. Add one as <code>.opencode/skill/&lt;name&gt;/SKILL.md</code> ' +
+      'or <code>.claude/skills/&lt;name&gt;/SKILL.md</code> in your workspace (or <code>~/.claude/skills/</code> globally). ' +
+      'The model invokes a skill automatically when your request matches its description.</div>';
+    messagesEl.appendChild(el);
+    toggleWelcome();
+    forceScrollToBottom();
+    return;
+  }
+
+  const sourceClass = (src: string) => (src === 'project' ? 'ok' : src === 'global' ? 'pending' : 'off');
+  const rows = skills
+    .map((s) => {
+      const dot = sourceClass(s.source);
+      const slash = s.slash ? `<span class="mcp-transport">/${escapeHtml(s.name)}</span>` : '';
+      const desc = s.description ? `<div class="skill-desc">${escapeHtml(s.description)}</div>` : '';
+      const where = s.path ? `<div class="skill-path">${escapeHtml(s.path)}</div>` : '';
+      return (
+        `<div class="mcp-row">` +
+        `<span class="mcp-dot ${dot}"></span>` +
+        `<div class="mcp-row-body">` +
+        `<div class="mcp-row-top"><span class="mcp-name">${escapeHtml(s.name)}</span>${slash}` +
+        `<span class="mcp-status-label ${dot}">${escapeHtml(s.source)}</span></div>` +
+        desc +
+        where +
+        `</div></div>`
+      );
+    })
+    .join('');
+
+  el.innerHTML =
+    `<div class="mcp-head">Skills <span class="mcp-count">${skills.length} available</span></div>` +
+    `<div class="mcp-list">${rows}</div>`;
+  messagesEl.appendChild(el);
+  toggleWelcome();
+  forceScrollToBottom();
+}
+
 function helpCommand(): void {
-  const lines = SLASH_COMMANDS.map((c) => `${c.name} — ${c.hint}`).join('\n');
+  const lines = allCommands()
+    .map((c) => `${c.name} — ${c.hint}${c.server?.source === 'skill' ? ' (skill)' : ''}`)
+    .join('\n');
   addSysChip(`Slash commands:\n${lines}`);
 }
 
@@ -651,12 +755,7 @@ function slashMenuOpen(): boolean {
 // `/token` (no spaces yet) — once the user moves past the command name we stop
 // suggesting so normal prompts starting with "/" aren't hijacked.
 function matchingCommands(): SlashCommand[] {
-  const value = inputEl.value;
-  if (!value.startsWith('/') || /\s/.test(value)) {
-    return [];
-  }
-  const q = value.toLowerCase();
-  return SLASH_COMMANDS.filter((c) => c.name.startsWith(q));
+  return matchSlashPrefix(inputEl.value, allCommands());
 }
 
 function updateSlashMenu(): void {
@@ -672,7 +771,8 @@ function updateSlashMenu(): void {
   matches.forEach((cmd, i) => {
     const row = document.createElement('div');
     row.className = `slash-item${i === slashActiveIndex ? ' active' : ''}`;
-    row.innerHTML = `<span class="slash-name">${escapeHtml(cmd.name)}</span><span class="slash-hint">${escapeHtml(cmd.hint)}</span>`;
+    const badge = cmd.server?.source === 'skill' ? '<span class="slash-badge">skill</span>' : '';
+    row.innerHTML = `<span class="slash-name">${escapeHtml(cmd.name)}${badge}</span><span class="slash-hint">${escapeHtml(cmd.hint)}</span>`;
     row.addEventListener('mousedown', (e) => {
       e.preventDefault(); // keep focus in the textarea
       acceptSlashCommand(cmd);
@@ -697,31 +797,51 @@ function moveSlashSelection(delta: number): void {
   updateSlashMenu();
 }
 
+// Execute a chosen command. Local UI commands run their callback; server
+// commands/skills are sent to the host to run via OpenCode (with any args).
+function executeCommand(cmd: SlashCommand, args = ''): void {
+  if (cmd.server) {
+    post({ type: 'runCommand', command: cmd.server.command, ...(args.trim() ? { arguments: args.trim() } : {}) });
+  } else {
+    cmd.run?.();
+  }
+}
+
 // Run the highlighted (or given) command straight from the menu.
 function acceptSlashCommand(cmd?: SlashCommand): void {
   const matches = matchingCommands();
   const chosen = cmd ?? matches[slashActiveIndex];
   closeSlashMenu();
-  if (chosen) {
-    chosen.run();
-    inputEl.value = '';
-    autoGrow();
+  if (!chosen) {
+    return;
   }
+  // A server command that takes arguments: don't fire yet — fill the input so
+  // the user can type the arguments, then press Enter.
+  if (chosen.server?.takesArgs) {
+    inputEl.value = chosen.name + ' ';
+    inputEl.focus();
+    autoGrow();
+    return;
+  }
+  inputEl.value = '';
+  autoGrow();
+  executeCommand(chosen);
 }
 
 // Run a slash command if the input is one. Returns true when handled (so the
 // caller should NOT send it to the model). An unknown /command is reported and
 // also swallowed, so a typo never gets sent to the model verbatim.
 function runSlashCommand(text: string): boolean {
-  if (!text.startsWith('/')) {
+  const parsed = parseSlashInput(text);
+  if (!parsed) {
     return false;
   }
-  const name = text.split(/\s+/, 1)[0].toLowerCase();
-  const cmd = SLASH_COMMANDS.find((c) => c.name === name);
+  const { name, args } = parsed;
+  const cmd = allCommands().find((c) => c.name.toLowerCase() === name);
   if (cmd) {
     inputEl.value = '';
     autoGrow();
-    cmd.run();
+    executeCommand(cmd, args);
     return true;
   }
   addSysChip(`Unknown command "${name}". Type /help to see what's available.`);
@@ -768,6 +888,8 @@ function onSend(): void {
     thinking: state.thinking,
     images,
     includeActiveFile: !!(state.activeFile && state.includeActiveFile),
+    // The current selection is always attached silently when present.
+    includeSelection: !!state.activeSelection,
   });
 }
 
@@ -778,7 +900,10 @@ function applyThinking(): void {
 }
 
 function persist(): void {
-  vscode.setState({ thinking: state.thinking, includeActiveFile: state.includeActiveFile });
+  vscode.setState({
+    thinking: state.thinking,
+    includeActiveFile: state.includeActiveFile,
+  });
 }
 
 function renderActiveFile(): void {
@@ -811,26 +936,87 @@ function addImage(file: File): Promise<void> {
   });
 }
 
+// Render pasted/attached images as compact chips (thumbnail + name + dimensions)
+// in the attachments row above the input, matching Claude's composer. Clicking
+// a chip opens the image in a lightbox over the chat. The whole attachments row
+// is hidden when there's nothing to show, so it costs no vertical space.
 function renderThumbs(): void {
   thumbsEl.innerHTML = '';
-  thumbsEl.style.display = state.pendingImages.length ? 'flex' : 'none';
   state.pendingImages.forEach((img, i) => {
     const chip = document.createElement('div');
-    chip.className = 'thumb';
+    chip.className = 'attach-chip';
+    chip.title = 'Click to preview';
+
     const im = document.createElement('img');
+    im.className = 'attach-thumb';
     im.src = img.dataUrl;
+
+    const meta = document.createElement('span');
+    meta.className = 'attach-meta';
+    const name = document.createElement('span');
+    name.className = 'attach-name';
+    name.textContent = img.name || 'image.png';
+    const dims = document.createElement('span');
+    dims.className = 'attach-dims';
+    // Fill in real pixel dimensions once the image decodes.
+    im.addEventListener('load', () => {
+      dims.textContent = im.naturalWidth && im.naturalHeight ? `${im.naturalWidth}×${im.naturalHeight}` : '';
+    });
+    meta.appendChild(name);
+    meta.appendChild(dims);
+
     const rm = document.createElement('button');
-    rm.className = 'thumb-rm';
+    rm.className = 'attach-rm';
     rm.innerHTML = icon.close;
     rm.title = 'Remove';
-    rm.addEventListener('click', () => {
+    rm.addEventListener('click', (e) => {
+      e.stopPropagation(); // don't open the lightbox when removing
       state.pendingImages.splice(i, 1);
       renderThumbs();
     });
+
+    chip.addEventListener('click', () => openLightbox(img.dataUrl, img.name || 'image.png'));
+
     chip.appendChild(im);
+    chip.appendChild(meta);
     chip.appendChild(rm);
     thumbsEl.appendChild(chip);
   });
+  // The attachments row holds image chips today; show it only when non-empty.
+  attachmentsEl.classList.toggle('hidden', state.pendingImages.length === 0);
+}
+
+// A full-bleed image preview over the chat output area (like Claude's). Click
+// the backdrop, press Escape, or hit the close button to dismiss.
+function openLightbox(src: string, alt: string): void {
+  closeLightbox();
+  const overlay = document.createElement('div');
+  overlay.className = 'lightbox';
+  overlay.id = 'lightbox';
+  const img = document.createElement('img');
+  img.className = 'lightbox-img';
+  img.src = src;
+  img.alt = alt;
+  const close = document.createElement('button');
+  close.className = 'lightbox-close';
+  close.innerHTML = icon.close;
+  close.title = 'Close (Esc)';
+  overlay.appendChild(img);
+  overlay.appendChild(close);
+  overlay.addEventListener('click', (e) => {
+    // Close on a backdrop click, or anywhere inside the close button — including
+    // its inner <svg>/<path>, which is the actual e.target when the visible X
+    // glyph is clicked (an identity check against the button would miss it).
+    const t = e.target as Node;
+    if (t === overlay || close.contains(t)) {
+      closeLightbox();
+    }
+  });
+  document.body.appendChild(overlay);
+}
+
+function closeLightbox(): void {
+  document.getElementById('lightbox')?.remove();
 }
 
 // ---------------------------------------------------------------------------
@@ -1104,7 +1290,8 @@ function estimateUsed(): number {
   const images = document.querySelectorAll('.msg-img').length + state.pendingImages.length;
   const fileTokens =
     state.activeFile && state.includeActiveFile ? Math.ceil(state.activeFile.chars / 4) : 0;
-  return overhead + Math.ceil(chars / 4) + images * 700 + fileTokens;
+  const selTokens = state.activeSelection ? Math.ceil(state.activeSelection.chars / 4) : 0;
+  return overhead + Math.ceil(chars / 4) + images * 700 + fileTokens + selTokens;
 }
 
 function renderMeter(): void {
@@ -2185,6 +2372,12 @@ window.addEventListener('message', (e: MessageEvent<HostToWebview>) => {
       renderActiveFile();
       renderMeter();
       break;
+    case 'activeSelection':
+      // The selection is auto-attached silently (no pill); just track it so the
+      // context meter reflects the extra tokens.
+      state.activeSelection = msg.selection;
+      renderMeter();
+      break;
     case 'status':
       setStatus(msg.text, msg.kind);
       break;
@@ -2199,6 +2392,12 @@ window.addEventListener('message', (e: MessageEvent<HostToWebview>) => {
       break;
     case 'mcpStatus':
       showMcpStatus(msg.servers);
+      break;
+    case 'skills':
+      showSkills(msg.skills);
+      break;
+    case 'commands':
+      setServerCommands(msg.commands);
       break;
     case 'error':
       showError(msg.message);
@@ -2238,6 +2437,12 @@ function installTestHook(): void {
           el.click();
         }
         reply({ ok: !!el });
+      } else if (m.__test__ === 'setInput') {
+        // Set the composer textarea value and fire the input event, so tests can
+        // drive the slash-command autocomplete the way a user typing would.
+        inputEl.value = String(m.value ?? '');
+        inputEl.dispatchEvent(new Event('input', { bubbles: true }));
+        reply({ ok: true });
       } else {
         reply({ error: `unknown __test__ op: ${m.__test__}` });
       }

@@ -26,6 +26,28 @@ export interface UiServer {
   url: string;
 }
 
+/** A server-provided slash command (a user/built-in command, or a skill). */
+export interface UiCommand {
+  name: string;
+  description: string;
+  /** 'command' or 'skill' — lets the menu badge skills. */
+  source: 'command' | 'skill';
+  /** True if the command template takes arguments ($ARGUMENTS). */
+  takesArgs: boolean;
+}
+
+/** One skill, as shown in the /skills panel. */
+export interface UiSkill {
+  name: string;
+  description: string;
+  /** 'project' (.opencode/skill or .claude/skills), 'global' (~/.claude), or 'built-in'. */
+  source: 'project' | 'global' | 'built-in';
+  /** Absolute SKILL.md path for disk skills (omitted for built-ins). */
+  path?: string;
+  /** Whether the skill is also invocable as a slash command. */
+  slash?: boolean;
+}
+
 /** One MCP server's status, as shown in the /mcp panel. */
 export interface UiMcpServer {
   name: string;
@@ -62,11 +84,23 @@ export type HostToWebview =
   // text, if OpenCode produced one). `summary` is only set when done === true.
   | { type: 'compacting'; active: boolean; summary?: string }
   | { type: 'activeFile'; path: string | null; chars: number }
+  // The current editor selection (or null when nothing is selected). Drives the
+  // excludable "selection" pill in the composer; the raw text is attached as
+  // context on send, not echoed here.
+  | {
+      type: 'activeSelection';
+      selection: { path: string; startLine: number; endLine: number; chars: number } | null;
+    }
   | { type: 'status'; text: string; kind?: 'info' | 'warn' | 'error' }
   | { type: 'command'; command: 'history' | 'newChat' | 'focusInput' }
   // Result of a /mcp request: the configured MCP servers and their live status.
   // `servers` is empty when none are configured.
   | { type: 'mcpStatus'; servers: UiMcpServer[] }
+  // Result of a /skills request: the discovered skills (empty if none).
+  | { type: 'skills'; skills: UiSkill[] }
+  // Server-provided slash commands (skills + custom/built-in commands) to merge
+  // into the composer's slash menu.
+  | { type: 'commands'; commands: UiCommand[] }
   | { type: 'error'; message: string };
 
 // ---- Webview -> Host -----------------------------------------------------
@@ -78,7 +112,14 @@ export interface UiImage {
 
 export type WebviewToHost =
   | { type: 'ready' }
-  | { type: 'send'; text: string; thinking: boolean; images?: UiImage[]; includeActiveFile?: boolean }
+  | {
+      type: 'send';
+      text: string;
+      thinking: boolean;
+      images?: UiImage[];
+      includeActiveFile?: boolean;
+      includeSelection?: boolean;
+    }
   | { type: 'selectModel'; modelID: string }
   | { type: 'loadModel'; modelID: string }
   | { type: 'unloadModel'; modelID: string }
@@ -101,5 +142,9 @@ export type WebviewToHost =
   | { type: 'questionReply'; requestID: string; answers: string[][] }
   | { type: 'questionReject'; requestID: string }
   | { type: 'openFile'; path: string }
+  | { type: 'openInTab' }
   | { type: 'requestMcpStatus' }
+  | { type: 'requestSkills' }
+  // Run a server command/skill (e.g. typed "/fibonacci-helper some args").
+  | { type: 'runCommand'; command: string; arguments?: string }
   | { type: 'retryConnect' };

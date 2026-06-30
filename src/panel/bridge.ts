@@ -3,10 +3,14 @@ import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { getConfig } from '../config';
 import { ServerRegistry } from '../connection';
+import { commandTakesArgs } from '../core/commands';
 import { clampContext } from '../core/context';
 import { humanizeError, isConnectionError } from '../core/errors';
 import { pickModel } from '../core/models';
 import { ConnectResult, SelfHealer } from '../core/reconnect';
+import { selectionLabel } from '../core/selection';
+import { emptySessionCandidates } from '../core/sessions';
+import { classifySkills } from '../core/skills';
 import { deriveTitle } from '../core/title';
 import { LMStudioClient } from '../lmstudio/client';
 import { log, logError } from '../logger';
@@ -14,12 +18,23 @@ import { discoverMcpServers } from '../mcp/discovery';
 import { OpencodeClient } from '../opencode/client';
 import { OpencodeEvent, PromptBody } from '../opencode/protocol';
 import { Disposable, OpencodeServerManager } from '../opencode/serverManager';
-import { HostToWebview, UiImage, UiMcpServer, UiModel, UiSession, WebviewToHost } from '../shared';
+import {
+  HostToWebview,
+  UiCommand,
+  UiImage,
+  UiMcpServer,
+  UiModel,
+  UiSession,
+  UiSkill,
+  WebviewToHost,
+} from '../shared';
 
 /** How often the health poll runs (ms). */
 const HEALTH_INTERVAL_MS = 5000;
 /** Refresh the model list every N health ticks while connected. */
 const REFRESH_EVERY_TICKS = 3;
+/** globalState flag: the one-time empty-session migration has already run. */
+const PRUNED_EMPTIES_KEY = 'lmstudioCode.prunedEmptySessions';
 
 export interface BridgeDeps {
   context: vscode.ExtensionContext;
@@ -43,8 +58,21 @@ export class ChatBridge {
   private connecting = false;
   private currentTitle = '';
   private agentsWarned = false;
+  /** In-flight createSession promise, so concurrent first-sends share one. */
+  private ensuringSession: Promise<void> | undefined;
   private activeFile: { abs: string; rel: string; chars: number } | null = null;
+  /**
+   * The current editor selection, tracked live like the active file. `text` is
+   * the exact selected text (from getText, so multi-byte safe); start/end are
+   * character offsets (from offsetAt) into the document; lines are 1-based for
+   * display. Null whenever there's no non-empty file selection — which also
+   * covers Markdown-preview panes (they aren't text editors, so no selection).
+   */
+  private activeSelection:
+    | { abs: string; rel: string; text: string; start: number; end: number; startLine: number; endLine: number }
+    | null = null;
   private editorSub: vscode.Disposable | undefined;
+  private selectionSub: vscode.Disposable | undefined;
   private messageSub: vscode.Disposable | undefined;
   private healthTimer: ReturnType<typeof setInterval> | undefined;
   private titleSink: ((t: string) => void) | undefined;
@@ -72,7 +100,13 @@ export class ChatBridge {
     // would otherwise leave a second handler alive, fanning one send out to
     // multiple prompt requests (duplicate replies).
     this.messageSub = webview.onDidReceiveMessage((m: WebviewToHost) => this.onMessage(m));
-    this.editorSub = vscode.window.onDidChangeActiveTextEditor((e) => this.updateActiveFile(e));
+    this.editorSub = vscode.window.onDidChangeActiveTextEditor((e) => {
+      this.updateActiveFile(e);
+      this.updateSelection(e);
+    });
+    this.selectionSub = vscode.window.onDidChangeTextEditorSelection((e) =>
+      this.updateSelection(e.textEditor),
+    );
     // Self-heal when the shared OpenCode server dies unexpectedly.
     this.serverExitSub = this.deps.server.addExitListener(() => this.onServerExit());
   }
@@ -82,6 +116,7 @@ export class ChatBridge {
     this.messageSub?.dispose();
     this.eventAbort?.abort();
     this.editorSub?.dispose();
+    this.selectionSub?.dispose();
     this.serverExitSub?.dispose();
     if (this.healthTimer) {
       clearInterval(this.healthTimer);
@@ -177,11 +212,58 @@ export class ChatBridge {
     this.post({ type: 'activeFile', path: this.activeFile.rel, chars: this.activeFile.chars });
   }
 
+  /**
+   * Track the current editor selection so it can be auto-attached as context,
+   * the way Claude Code shares the highlighted code. Cleared (and the pill
+   * removed) whenever the selection is empty or the editor isn't a real file —
+   * which is also why a Markdown *preview* never produces a selection (it's not
+   * a TextEditor). Uses getText() for the exact text (multi-byte safe) and
+   * offsetAt() for character offsets, so the range we hand OpenCode lines up
+   * with the text even with emoji/accented characters in the document.
+   */
+  private updateSelection(editor: vscode.TextEditor | undefined): void {
+    // Keep the last real selection when focus moves to the webview/panel (the
+    // editor goes undefined) — same as updateActiveFile. Otherwise the user's
+    // highlighted code would vanish the instant they click into the composer to
+    // type, which is the primary "highlight → ask about it" flow.
+    if (!editor || editor.document.uri.scheme !== 'file') {
+      return;
+    }
+    const sel = editor.selection;
+    if (!sel || sel.isEmpty) {
+      // A real file editor with no (longer a) selection — the user deselected.
+      if (this.activeSelection) {
+        this.activeSelection = null;
+        this.post({ type: 'activeSelection', selection: null });
+      }
+      return;
+    }
+    const doc = editor.document;
+    const abs = doc.uri.fsPath;
+    const text = doc.getText(sel);
+    this.activeSelection = {
+      abs,
+      rel: vscode.workspace.asRelativePath(abs),
+      text,
+      start: doc.offsetAt(sel.start),
+      end: doc.offsetAt(sel.end),
+      startLine: sel.start.line + 1, // 1-based for display (App.tsx#14-19)
+      endLine: sel.end.line + 1,
+    };
+    this.post({
+      type: 'activeSelection',
+      selection: {
+        path: this.activeSelection.rel,
+        startLine: this.activeSelection.startLine,
+        endLine: this.activeSelection.endLine,
+        chars: text.length,
+      },
+    });
+  }
+
   /** Start a fresh conversation (invoked by the New Chat command). */
   async requestNewChat(): Promise<void> {
-    if (this.client) {
-      await this.newSession();
-    }
+    await this.newSession();
   }
 
   /** Ask the webview to run a UI command (e.g. open history overlay). */
@@ -215,7 +297,13 @@ export class ChatBridge {
           await this.init();
           break;
         case 'send':
-          await this.handleSend(msg.text, msg.thinking, msg.images ?? [], msg.includeActiveFile ?? false);
+          await this.handleSend(
+            msg.text,
+            msg.thinking,
+            msg.images ?? [],
+            msg.includeActiveFile ?? false,
+            msg.includeSelection ?? false,
+          );
           break;
         case 'selectModel':
           this.currentModel = msg.modelID;
@@ -306,8 +394,17 @@ export class ChatBridge {
         case 'openFile':
           await this.openFile(msg.path);
           break;
+        case 'openInTab':
+          await vscode.commands.executeCommand('lmstudioCode.openInTab');
+          break;
         case 'requestMcpStatus':
           await this.sendMcpStatus();
+          break;
+        case 'requestSkills':
+          await this.sendSkills();
+          break;
+        case 'runCommand':
+          await this.handleRunCommand(msg.command, msg.arguments);
           break;
         case 'retryConnect':
           await this.init();
@@ -403,10 +500,25 @@ export class ChatBridge {
     });
 
     await this.sendSessions();
+    // No eager session: a fresh chat stays null until the first message creates
+    // it lazily (handleSend), so an empty "New chat" never shows in history.
     if (!this.currentSessionID) {
-      await this.newSession(false);
+      this.updateTitle('New chat');
+      this.post({ type: 'cleared' });
     }
+    // One-time migration: clean up empty sessions created before sessions went
+    // lazy. Gated behind a PERSISTED flag (not a per-instance one) so it runs
+    // once per install — every panel re-resolve / editor tab spins up a new
+    // ChatBridge, and re-running this destructive scan each time is both wasteful
+    // and widens the race window against sibling bridges' in-flight sessions.
+    if (!this.deps.context.globalState.get(PRUNED_EMPTIES_KEY)) {
+      void this.deps.context.globalState.update(PRUNED_EMPTIES_KEY, true);
+      void this.pruneEmptySessions();
+    }
+    // Populate the slash menu with the server's commands + skills.
+    void this.sendCommands();
     this.updateActiveFile(vscode.window.activeTextEditor);
+    this.updateSelection(vscode.window.activeTextEditor);
     this.warnIfAgentsLarge();
     // Clean connect — clear any reconnect backoff held by the healer.
     this.healer.noteConnected();
@@ -503,6 +615,85 @@ export class ChatBridge {
     this.post({ type: 'mcpStatus', servers });
   }
 
+  /**
+   * Gather the skills OpenCode discovered (GET /skill) for the `/skills` panel,
+   * classifying each by where it came from so the user can confirm their
+   * project/global/Claude-Code skills are being found. Posts a `skills`
+   * message; `skills: []` means none were discovered.
+   */
+  private async sendSkills(): Promise<void> {
+    let skills: UiSkill[] = [];
+    if (this.client) {
+      try {
+        const raw = await this.client.listSkills();
+        const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '';
+        // Classification (project / global / built-in) is pure — see core/skills.
+        skills = classifySkills(raw, root);
+      } catch (err) {
+        logError('GET /skill failed', err);
+      }
+    }
+    this.post({ type: 'skills', skills });
+  }
+
+  /**
+   * Send the server's slash commands (custom/built-in commands AND skills) to
+   * the webview so they appear in the composer's slash menu. Skills carry
+   * source:'skill' so the menu can badge them.
+   */
+  private async sendCommands(): Promise<void> {
+    if (!this.client) {
+      return;
+    }
+    try {
+      const raw = await this.client.listCommands();
+      const commands: UiCommand[] = raw.map((c) => ({
+        name: c.name,
+        description: c.description ?? '',
+        source: c.source === 'skill' ? 'skill' : 'command',
+        takesArgs: commandTakesArgs(c.hints),
+      }));
+      this.post({ type: 'commands', commands });
+    } catch (err) {
+      logError('GET /command failed', err);
+    }
+  }
+
+  /**
+   * Run a server command or skill (e.g. the user typed "/fibonacci-helper x").
+   * Creates the session lazily if needed (a command is real activity, so it
+   * earns a history entry), ensures the model context, then hands off to
+   * OpenCode which expands the template and streams the result like a prompt.
+   */
+  private async handleRunCommand(command: string, args?: string): Promise<void> {
+    if (!this.client) {
+      throw new Error('OpenCode server is not running.');
+    }
+    if (!this.currentModel) {
+      throw new Error('No LM Studio model selected.');
+    }
+    await this.ensureSession();
+    const cfg = getConfig();
+    if (cfg.autoEnsureContext) {
+      await this.deps.lmStudio
+        .ensureContext(this.currentModel, cfg.minContextLength, cfg.gpuOffload, (m) =>
+          this.post({ type: 'status', text: m }),
+        )
+        .catch((err) => logError('ensureContext for command', err));
+      this.post({ type: 'status', text: '' });
+    }
+    this.post({ type: 'busy', busy: true });
+    await this.client.runCommand(this.currentSessionID!, {
+      command,
+      ...(args ? { arguments: args } : {}),
+      agent: this.agent,
+      model: `lmstudio/${this.currentModel}`,
+    });
+    // A command counts as the first turn of a fresh chat — refresh history so it
+    // shows up (and gets its session title from the run).
+    await this.sendSessions();
+  }
+
   private postServers(connected: boolean): void {
     this.connected = connected;
     this.post({
@@ -597,14 +788,49 @@ export class ChatBridge {
     return this.lastModels;
   }
 
+  /**
+   * Start a fresh chat WITHOUT creating a server session yet. The actual
+   * OpenCode session is created lazily on the first send (see handleSend), so an
+   * untouched "New chat" never lands in history — only conversations with real
+   * back-and-forth do. Resets to a null session and clears the view.
+   */
   private async newSession(announce = true): Promise<void> {
-    const session = await this.client!.createSession('New chat');
-    this.currentSessionID = session.id;
+    this.currentSessionID = null;
     this.updateTitle('New chat');
     this.post({ type: 'cleared' });
     if (announce) {
       await this.sendSessions();
     }
+  }
+
+  /**
+   * Ensure a server session exists for the current chat, creating one on demand.
+   * Called right before the first prompt of a fresh chat — this is the moment a
+   * "New chat" actually becomes a real session (and thus a history entry).
+   */
+  private async ensureSession(): Promise<void> {
+    if (this.currentSessionID || !this.client) {
+      return;
+    }
+    if (this.ensuringSession) {
+      return this.ensuringSession;
+    }
+    const client = this.client;
+    this.ensuringSession = (async () => {
+      try {
+        const session = await client.createSession('New chat');
+        if (this.currentSessionID) {
+          // A concurrent loadSession won the race — don't clobber it; discard
+          // the session we just created so it doesn't linger as an empty entry.
+          void client.deleteSession(session.id).catch(() => undefined);
+          return;
+        }
+        this.currentSessionID = session.id;
+      } finally {
+        this.ensuringSession = undefined;
+      }
+    })();
+    return this.ensuringSession;
   }
 
   private async sendSessions(): Promise<void> {
@@ -622,6 +848,51 @@ export class ChatBridge {
       this.updateTitle(current.title);
     }
     this.post({ type: 'sessions', sessions: ui, currentSessionID: this.currentSessionID });
+  }
+
+  /**
+   * One-time cleanup of empty sessions left over from before sessions went lazy.
+   * Going forward none are created, but a user upgrading has a pile of zero-
+   * message "New chat" entries. A session that never had a message keeps
+   * time.created === time.updated (verified: the first prompt bumps `updated`);
+   * we confirm zero messages before deleting so a real session is never removed.
+   * Best-effort and quiet — failures here must never block startup.
+   */
+  private async pruneEmptySessions(): Promise<void> {
+    if (!this.client) {
+      return;
+    }
+    let removed = 0;
+    try {
+      const sessions = await this.client.listSessions();
+      // Two guards keep this from deleting a session another open view is using:
+      // an age floor (skip very recent sessions — likely a sibling's in-flight
+      // new chat) and a workspace scope (only prune sessions in our directory,
+      // since the OpenCode store is shared across projects). Leftover empties
+      // from before lazy sessions are old + in-workspace, so still get cleaned.
+      const candidates = emptySessionCandidates(sessions, {
+        currentSessionID: this.currentSessionID,
+        directory: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '',
+        now: Date.now(),
+      });
+      for (const s of candidates) {
+        try {
+          const messages = await this.client.getMessages(s.id);
+          if (Array.isArray(messages) && messages.length === 0) {
+            await this.client.deleteSession(s.id);
+            removed++;
+          }
+        } catch {
+          // skip this one — never let cleanup throw
+        }
+      }
+    } catch (err) {
+      logError('pruneEmptySessions', err);
+    }
+    if (removed > 0) {
+      log(`pruned ${removed} empty session(s)`);
+      await this.sendSessions();
+    }
   }
 
   private async clearAllSessions(): Promise<void> {
@@ -717,6 +988,7 @@ export class ChatBridge {
     thinking: boolean,
     images: UiImage[],
     includeActiveFile: boolean,
+    includeSelection: boolean,
   ): Promise<void> {
     if (!this.client) {
       throw new Error('OpenCode server is not running.');
@@ -724,9 +996,10 @@ export class ChatBridge {
     if (!this.currentModel) {
       throw new Error('No LM Studio model selected.');
     }
-    if (!this.currentSessionID) {
-      await this.newSession(false);
-    }
+    // Lazily create the server session on the first message of a fresh chat, so
+    // an untouched "New chat" never exists server-side (and never shows in
+    // history).
+    await this.ensureSession();
     const cfg = getConfig();
 
     if (cfg.autoEnsureContext) {
@@ -784,6 +1057,22 @@ export class ChatBridge {
       } catch (err) {
         logError('attach active file failed', err);
       }
+    }
+
+    // Attach the current editor selection as context (auto-included, excludable
+    // from the UI). Shared as a file part scoped to the selection's range, so
+    // the model sees exactly the highlighted code plus where it lives. The
+    // filename carries the line range (e.g. app.js#14-19) so it's self-labeling.
+    if (includeSelection && this.activeSelection) {
+      const s = this.activeSelection;
+      const label = selectionLabel(s.rel, s.startLine, s.endLine);
+      parts.push({
+        type: 'file',
+        mime: 'text/plain',
+        filename: label,
+        url: `file://${s.abs}`,
+        source: { type: 'file', path: s.abs, text: { value: s.text, start: s.start, end: s.end } },
+      });
     }
 
     this.post({ type: 'busy', busy: true });

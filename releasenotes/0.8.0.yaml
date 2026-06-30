@@ -1,0 +1,21 @@
+version: 0.8.0
+date: 2026-06-30
+highlights:
+  - Highlight code in any file and it's automatically shared as context with your next message.
+  - New /skills viewer plus skills and custom commands as slash commands — type / to run them.
+  - Cleaner composer — attachments move above the input, images open in a lightbox, and the action buttons float in the panel.
+added:
+  - Editor-selection context — whatever you have highlighted in a file is auto-attached (as the exact lines + range) to your next prompt, the way Claude Code shares a selection. No setup, no pill to manage.
+  - /skills command — lists the skills available to the model with a source tag (project / global / built-in) and path, so you can confirm your .opencode/skill and .claude/skills are being discovered.
+  - Skills and OpenCode commands now appear in the slash menu — type /skill-name to run a skill, or any custom/built-in command, with arguments. Skills show a 'skill' badge.
+  - Image attachments now show as a labelled chip with pixel dimensions; click one to open a full-size lightbox over the chat (Esc or click to dismiss).
+  - Floating top-right action cluster (New chat / History / Open in editor tab) that hovers inside the panel.
+changed:
+  - Composer redesign — pasted images and the open-file reference moved into a tidy attachments row above the input, with the active file shown as a quiet inline reference instead of a filled pill. Reduced the input box corner radius.
+  - Sessions are created lazily — a 'New chat' no longer appears in history until you actually send a message, and a one-time cleanup removes empty sessions left over from before.
+fixed:
+  - The auto-attached selection no longer disappears the moment you click into the chat box to type; it's preserved until you change or clear the selection.
+  - The image lightbox close (X) button now works when you click the icon itself, not just the area around it.
+  - Empty-session cleanup now skips very recent sessions and only touches the current workspace, so it can never delete a chat another open view just started.
+  - Skills in a sibling folder that merely shares the workspace name as a path prefix are no longer mislabelled as project skills.
+removed: []

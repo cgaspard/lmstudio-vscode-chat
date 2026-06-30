@@ -1,5 +1,6 @@
 import { log, logError } from '../logger';
 import {
+  CommandsResponse,
   McpStatusResponse,
   MessageWithParts,
   OpencodeEvent,
@@ -8,6 +9,7 @@ import {
   ProvidersResponse,
   QuestionAnswer,
   Session,
+  SkillsResponse,
 } from './protocol';
 
 /**
@@ -54,6 +56,38 @@ export class OpencodeClient {
    */
   async listMcp(): Promise<McpStatusResponse> {
     return this.req('GET', '/mcp');
+  }
+
+  /**
+   * The skills OpenCode discovered (`GET /skill`): SKILL.md files from
+   * <project>/.opencode/skill, <project>/.claude/skills, ~/.claude/skills, plus
+   * built-ins. Used by the `/skills` panel so the user can confirm which skills
+   * are available to the model.
+   */
+  async listSkills(): Promise<SkillsResponse> {
+    return this.req('GET', '/skill');
+  }
+
+  /**
+   * Commands OpenCode exposes (`GET /command`): user/built-in slash commands AND
+   * skills, unified — each carries a `source` ("command" | "skill"). Used to
+   * populate the slash menu with the real server command set.
+   */
+  async listCommands(): Promise<CommandsResponse> {
+    return this.req('GET', '/command');
+  }
+
+  /**
+   * Run a command or skill in a session (`POST /session/{id}/command`). The
+   * server expands the command/skill template (with `arguments` substituted for
+   * $ARGUMENTS) and runs it; output streams over the event channel like a normal
+   * prompt. `agent`/`model` pin who runs it.
+   */
+  async runCommand(
+    sessionID: string,
+    body: { command: string; arguments?: string; agent?: string; model?: string },
+  ): Promise<void> {
+    await this.req('POST', `/session/${sessionID}/command`, body);
   }
 
   async createSession(title?: string): Promise<Session> {

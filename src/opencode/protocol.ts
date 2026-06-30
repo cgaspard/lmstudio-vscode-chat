@@ -44,6 +44,46 @@ export interface McpServerState {
 /** Map of MCP server name -> its current connection state. */
 export type McpStatusResponse = Record<string, McpServerState>;
 
+// ---- Skills --------------------------------------------------------------
+// `GET /skill` returns the discovered skills. Shape (SkillV2Info): a list of
+// { name, description, location, content, slash? }. `location` is an absolute
+// SKILL.md path, or "<built-in>" for skills shipped with OpenCode. Skills are
+// discovered from disk: <project>/.opencode/skill, <project>/.claude/skills,
+// and ~/.claude/skills (Claude Code compatible), plus built-ins.
+
+export interface SkillInfo {
+  name: string;
+  description: string;
+  /** Absolute path to the SKILL.md, or "<built-in>". */
+  location: string;
+  /** The SKILL.md body (frontmatter stripped). */
+  content: string;
+  /** Whether the skill is also registered as a slash command. */
+  slash?: boolean;
+  [k: string]: unknown;
+}
+
+export type SkillsResponse = SkillInfo[];
+
+// ---- Commands ------------------------------------------------------------
+// `GET /command` returns BOTH user/built-in commands and skills as a unified
+// list; the `source` field discriminates ("command" vs "skill"). A command is
+// run with `POST /session/{id}/command` { command, arguments?, agent?, model? }.
+
+export interface CommandInfo {
+  name: string;
+  description?: string;
+  /** "command" for slash commands, "skill" for skills surfaced as commands. */
+  source?: 'command' | 'skill' | string;
+  /** Whether the command runs as a subtask (subagent). */
+  subtask?: boolean;
+  /** Argument placeholders the template expects (e.g. ["$ARGUMENTS"]). */
+  hints?: string[];
+  [k: string]: unknown;
+}
+
+export type CommandsResponse = CommandInfo[];
+
 // ---- Message parts -------------------------------------------------------
 
 export interface TextPart {

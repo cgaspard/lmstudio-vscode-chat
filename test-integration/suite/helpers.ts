@@ -45,6 +45,11 @@ export async function click(selector: string): Promise<boolean> {
   return (await exec({ __test__: 'click', selector })).ok;
 }
 
+/** Set the composer input value and fire its input event (drives autocomplete). */
+export async function setInput(value: string): Promise<void> {
+  await exec({ __test__: 'setInput', value });
+}
+
 /** Poll until the predicate over a selector's count holds (or time out). */
 export async function waitFor(
   selector: string,
