@@ -5,6 +5,14 @@ import { getConfig } from '../config';
 import { ServerRegistry } from '../connection';
 import { commandTakesArgs } from '../core/commands';
 import { clampContext } from '../core/context';
+import {
+  Goal,
+  buildContinuePrompt,
+  buildJudgePrompt,
+  decideNext,
+  newGoal,
+  parseJudgeVerdict,
+} from '../core/goal';
 import { humanizeError, isConnectionError } from '../core/errors';
 import { pickModel } from '../core/models';
 import { ConnectResult, SelfHealer } from '../core/reconnect';
@@ -21,6 +29,7 @@ import { Disposable, OpencodeServerManager } from '../opencode/serverManager';
 import {
   HostToWebview,
   UiCommand,
+  UiGoal,
   UiImage,
   UiMcpServer,
   UiModel,
@@ -60,6 +69,16 @@ export class ChatBridge {
   private agentsWarned = false;
   /** In-flight createSession promise, so concurrent first-sends share one. */
   private ensuringSession: Promise<void> | undefined;
+  /**
+   * The active goal loop, or null. `paused` keeps the goal pinned without
+   * auto-continuing (user pressed Stop / pause, or a safety cap tripped).
+   * Session-scoped: cleared on new chat / session switch.
+   */
+  private activeGoal: (Goal & { startedAt: number; paused: boolean }) | null = null;
+  /** True while a judge check is in flight (prevents concurrent checks). */
+  private goalChecking = false;
+  /** Last time the loop advanced — drives the health-tick watchdog. */
+  private lastGoalActivity = 0;
   private activeFile: { abs: string; rel: string; chars: number } | null = null;
   /**
    * The current editor selection, tracked live like the active file. `text` is
@@ -141,6 +160,19 @@ export class ChatBridge {
       return;
     }
     await this.healer.tick();
+    // Goal watchdog ("wake up on occasion"): if the loop lost its idle signal
+    // (e.g. an error swallowed the event) re-check once things are quiet.
+    if (
+      this.activeGoal &&
+      !this.activeGoal.paused &&
+      !this.goalChecking &&
+      Date.now() - this.lastGoalActivity > 120_000
+    ) {
+      this.lastGoalActivity = Date.now(); // back off between watchdog retries
+      if (!(await this.isSessionBusy())) {
+        void this.runGoalCheck();
+      }
+    }
   }
 
   /** LM Studio went away — keep the live OpenCode server, just show the banner. */
@@ -378,6 +410,14 @@ export class ChatBridge {
           await this.compactSession();
           break;
         case 'abort':
+          // Stop means stop: pause the goal loop BEFORE aborting, so the abort's
+          // session.idle event can't race in and immediately re-continue the
+          // turn the user just killed (resume from the goal bar).
+          if (this.activeGoal && !this.activeGoal.paused) {
+            this.activeGoal.paused = true;
+            this.postGoal();
+            this.post({ type: 'status', text: 'Goal paused — resume from the goal bar.', kind: 'warn' });
+          }
           if (this.currentSessionID) {
             await this.client?.abort(this.currentSessionID);
           }
@@ -405,6 +445,22 @@ export class ChatBridge {
           break;
         case 'runCommand':
           await this.handleRunCommand(msg.command, msg.arguments);
+          break;
+        case 'setGoal':
+          await this.setGoal(msg.objective);
+          break;
+        case 'pauseGoal':
+          if (this.activeGoal) {
+            this.activeGoal.paused = true;
+            this.postGoal();
+          }
+          break;
+        case 'resumeGoal':
+          await this.resumeGoal();
+          break;
+        case 'clearGoal':
+          this.activeGoal = null;
+          this.postGoal();
           break;
         case 'retryConnect':
           await this.init();
@@ -694,6 +750,232 @@ export class ChatBridge {
     await this.sendSessions();
   }
 
+  // ---- Goal loop -----------------------------------------------------------
+  // /goal <objective> sets an autonomous goal: after every turn goes idle, an
+  // isolated LLM judge decides MET / NOT_MET; NOT_MET auto-continues the agent
+  // with the judge's feedback until the goal is met or an unreasonable endpoint
+  // is hit (iteration cap or no-progress stall — see core/goal). The judge runs
+  // in a throwaway session that is deleted after each check so it never touches
+  // the conversation or the history list.
+
+  private postGoal(): void {
+    const g = this.activeGoal;
+    const goal: UiGoal | null = g
+      ? {
+          objective: g.objective,
+          iteration: g.iteration,
+          maxIterations: g.maxIterations,
+          startedAt: g.startedAt,
+          state: g.paused ? 'paused' : 'active',
+        }
+      : null;
+    this.post({ type: 'goal', goal });
+  }
+
+  /** Set (or replace) the goal and kick off pursuit immediately. */
+  private async setGoal(objective: string): Promise<void> {
+    const obj = objective.trim();
+    if (!obj) {
+      return;
+    }
+    this.activeGoal = { ...newGoal(obj), startedAt: Date.now(), paused: false };
+    this.lastGoalActivity = Date.now();
+    this.postGoal();
+    // Kick off right away (like Codex's "Pursuing goal…"): the first turn tells
+    // the agent the goal; the idle→judge→continue loop sustains it from there.
+    await this.handleSend(
+      `Work toward this goal until it is fully met: ${obj}`,
+      true,
+      [],
+      false,
+      false,
+    );
+  }
+
+  /** Un-pause the loop; if the session is already idle, get moving again now. */
+  private async resumeGoal(): Promise<void> {
+    if (!this.activeGoal) {
+      return;
+    }
+    this.activeGoal.paused = false;
+    this.lastGoalActivity = Date.now();
+    this.postGoal();
+    if (!(await this.isSessionBusy())) {
+      void this.runGoalCheck();
+    }
+  }
+
+  /** Whether the current session has a turn in flight (server-side truth). */
+  private async isSessionBusy(): Promise<boolean> {
+    try {
+      const st = await this.client?.sessionStatus();
+      return !!(st && this.currentSessionID && st[this.currentSessionID]);
+    } catch {
+      return false;
+    }
+  }
+
+  /** The user-facing identity override (shared by sends + goal continues). */
+  private identitySystem(): string {
+    return 'You are "LM Studio Code", an agentic coding assistant running on the user\'s machine against their local LM Studio models. If asked your name or what you are, identify as "LM Studio Code". Never identify yourself as "opencode".';
+  }
+
+  /** The goal directive appended to the agent's system prompt while active. */
+  private goalSystemSuffix(): string {
+    const g = this.activeGoal;
+    if (!g || g.paused) {
+      return '';
+    }
+    return (
+      `\n\nACTIVE GOAL: ${g.objective}\n` +
+      'Keep working toward this goal across turns until it is fully met. ' +
+      'Prefer taking the next concrete action over asking for confirmation.'
+    );
+  }
+
+  /** session.idle hook — run one judge check (debounced by the checking flag). */
+  private async onTurnIdle(): Promise<void> {
+    if (!this.activeGoal || this.activeGoal.paused || this.goalChecking || this.disposed) {
+      return;
+    }
+    await new Promise((r) => setTimeout(r, 600)); // let final parts persist
+    void this.runGoalCheck();
+  }
+
+  /** One loop step: transcript → judge → met / continue / stop. */
+  private async runGoalCheck(): Promise<void> {
+    const goal = this.activeGoal;
+    if (
+      !goal ||
+      goal.paused ||
+      this.goalChecking ||
+      !this.client ||
+      !this.currentSessionID ||
+      !this.currentModel
+    ) {
+      return;
+    }
+    this.goalChecking = true;
+    this.post({ type: 'goalEvent', kind: 'checking' });
+    try {
+      const transcript = await this.transcriptTail(this.currentSessionID);
+      const verdict = await this.judgeGoal(goal.objective, transcript);
+      // The goal may have been cleared/edited/paused while the judge ran.
+      if (this.activeGoal !== goal || goal.paused) {
+        return;
+      }
+      const action = decideNext(goal, verdict);
+      this.lastGoalActivity = Date.now();
+      if (action.kind === 'met') {
+        this.activeGoal = null;
+        this.postGoal();
+        this.post({ type: 'goalEvent', kind: 'met', reason: action.reason });
+      } else if (action.kind === 'continue') {
+        goal.iteration = action.iteration;
+        goal.recentReasons = [...goal.recentReasons, action.reason].slice(-5);
+        this.postGoal();
+        this.post({
+          type: 'goalEvent',
+          kind: 'continued',
+          reason: action.reason,
+          iteration: action.iteration,
+        });
+        await this.continueGoal(goal.objective, action.reason);
+      } else {
+        // Unreasonable endpoint (cap or stall): pause, keep the goal pinned so
+        // the user can see why and resume/raise the cap if they want.
+        goal.paused = true;
+        this.postGoal();
+        this.post({ type: 'goalEvent', kind: 'stopped', why: action.why, reason: action.reason });
+      }
+    } catch (err) {
+      logError('goal check failed', err);
+    } finally {
+      this.goalChecking = false;
+    }
+  }
+
+  /** Judge in an isolated throwaway session; always delete it afterwards. */
+  private async judgeGoal(
+    objective: string,
+    transcript: string,
+  ): Promise<{ met: boolean; reason: string }> {
+    const client = this.client!;
+    const judge = await client.createSession('goal-judge');
+    try {
+      let prompt = buildJudgePrompt(objective, transcript);
+      if (/qwen/i.test(this.currentModel!)) {
+        prompt += '\n\n/no_think'; // qwen soft-switch: skip <think> for a fast verdict
+      }
+      await client.promptAsync(judge.id, {
+        model: { providerID: 'lmstudio', modelID: this.currentModel! },
+        system:
+          'You are a strict goal-completion judge. Answer directly and concisely. ' +
+          'Do not produce chain-of-thought.',
+        parts: [{ type: 'text', text: prompt }],
+      });
+      // Poll for the completed assistant reply (local models can be slow).
+      const deadline = Date.now() + 120_000;
+      while (Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 1500));
+        if (this.disposed) {
+          return { met: false, reason: 'disposed' };
+        }
+        const msgs = await client.getMessages(judge.id);
+        const done = [...msgs]
+          .reverse()
+          .find((m) => m.info.role === 'assistant' && m.info.time?.completed);
+        if (done) {
+          const text = (done.parts ?? [])
+            .filter((p): p is Extract<typeof p, { type: 'text' }> => p.type === 'text')
+            .map((p) => (p as { text?: string }).text ?? '')
+            .join('\n');
+          return parseJudgeVerdict(text);
+        }
+      }
+      return { met: false, reason: 'judge timed out' };
+    } finally {
+      void client.deleteSession(judge.id).catch(() => undefined);
+    }
+  }
+
+  /** The tail of the conversation, as plain text for the judge (~4k chars). */
+  private async transcriptTail(sessionID: string): Promise<string> {
+    const msgs = await this.client!.getMessages(sessionID);
+    const lines: string[] = [];
+    for (const m of msgs.slice(-8)) {
+      const text = (m.parts ?? [])
+        .map((p) => {
+          if (p.type === 'text') {
+            return (p as { text?: string }).text ?? '';
+          }
+          if (p.type === 'tool') {
+            const t = p as { tool?: string; state?: { title?: string } };
+            return `[tool: ${t.tool ?? '?'} ${t.state?.title ?? ''}]`;
+          }
+          return '';
+        })
+        .filter(Boolean)
+        .join('\n');
+      if (text.trim()) {
+        lines.push(`${m.info.role.toUpperCase()}:\n${text.trim()}`);
+      }
+    }
+    const full = lines.join('\n\n');
+    return full.length > 4000 ? full.slice(-4000) : full;
+  }
+
+  /** Auto-continue the working agent with the judge's feedback. */
+  private async continueGoal(objective: string, reason: string): Promise<void> {
+    this.post({ type: 'busy', busy: true });
+    await this.sendPrompt({
+      model: { providerID: 'lmstudio', modelID: this.currentModel! },
+      agent: this.agent,
+      system: this.identitySystem() + this.goalSystemSuffix(),
+      parts: [{ type: 'text', text: buildContinuePrompt(objective, reason) }],
+    });
+  }
+
   private postServers(connected: boolean): void {
     this.connected = connected;
     this.post({
@@ -796,6 +1078,9 @@ export class ChatBridge {
    */
   private async newSession(announce = true): Promise<void> {
     this.currentSessionID = null;
+    // A goal is scoped to its conversation — leaving it ends the loop.
+    this.activeGoal = null;
+    this.postGoal();
     this.updateTitle('New chat');
     this.post({ type: 'cleared' });
     if (announce) {
@@ -975,6 +1260,9 @@ export class ChatBridge {
     if (!this.client) {
       return;
     }
+    // A goal is scoped to its conversation — switching sessions ends the loop.
+    this.activeGoal = null;
+    this.postGoal();
     this.currentSessionID = sessionID;
     const messages = await this.client.getMessages(sessionID);
     const sessions = await this.client.listSessions();
@@ -1021,8 +1309,7 @@ export class ChatBridge {
 
     // Identity: OpenCode's base prompt makes the model call itself "opencode".
     // Our system text is appended, so this overrides the user-facing identity.
-    let system =
-      'You are "LM Studio Code", an agentic coding assistant running on the user\'s machine against their local LM Studio models. If asked your name or what you are, identify as "LM Studio Code". Never identify yourself as "opencode".';
+    let system = this.identitySystem() + this.goalSystemSuffix();
 
     // Thinking control. Qwen-family models honor the `/no_think` soft switch
     // (consumed by the chat template); for others fall back to a system hint.
@@ -1140,6 +1427,10 @@ export class ChatBridge {
     // stray event mid-init can't leak into the webview.
     if (sid && sid !== this.currentSessionID) {
       return;
+    }
+    // Goal loop: a finished turn on the active session triggers one judge check.
+    if (event.type === 'session.idle' && sid && sid === this.currentSessionID) {
+      void this.onTurnIdle();
     }
     this.post({ type: 'event', event });
   }

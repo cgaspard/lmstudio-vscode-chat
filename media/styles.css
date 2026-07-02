@@ -891,6 +891,75 @@ body {
 .composer {
   padding: 6px 10px 12px;
 }
+
+/* Pinned goal bar (Codex-style) — sits on top of the composer box while a goal
+   is being pursued: icon, "Pursuing goal <objective>", round/elapsed meta, and
+   edit / pause / clear controls. Dimmed with a "Goal paused" label when paused. */
+.goal-bar {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0 6px;
+  padding: 6px 12px 10px;
+  border: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.28));
+  border-bottom: none;
+  border-radius: 12px 12px 0 0;
+  background: var(--vscode-editorWidget-background, rgba(128, 128, 128, 0.06));
+  margin-bottom: -6px; /* tuck under the composer box's top edge */
+  font-size: 12px;
+}
+.goal-bar.hidden {
+  display: none;
+}
+.goal-bar.paused {
+  opacity: 0.75;
+}
+.goal-ico {
+  color: var(--accent);
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+.goal-bar.paused .goal-ico {
+  color: var(--vscode-descriptionForeground);
+}
+.goal-label {
+  font-weight: 600;
+  color: var(--vscode-foreground);
+  flex: 0 0 auto;
+}
+.goal-text {
+  color: var(--vscode-descriptionForeground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.goal-meta {
+  flex: 0 0 auto;
+  color: var(--vscode-descriptionForeground);
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+}
+.goal-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 2px;
+  flex: 0 0 auto;
+}
+.goal-btn {
+  background: transparent;
+  border: none;
+  color: var(--vscode-descriptionForeground);
+  cursor: pointer;
+  padding: 3px 5px;
+  border-radius: 5px;
+  display: inline-flex;
+  align-items: center;
+}
+.goal-btn:hover {
+  background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.15));
+  color: var(--vscode-foreground);
+}
 .composer-box {
   position: relative;
   background: var(--vscode-input-background);
@@ -927,6 +996,35 @@ body {
   padding-top: 8px;
   border-top: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.22));
   gap: 6px;
+  /* Never push controls off-screen: the row clips, and layoutComposer() moves
+     lower-priority controls into the ⋯ menu until everything fits. Children
+     must not flex-shrink or the overflow measurement would lie. */
+  flex-wrap: nowrap;
+  overflow: hidden;
+}
+.composer-tools > *,
+.composer-right > * {
+  flex-shrink: 0;
+}
+/* The ⋯ menu: collapsed composer controls, stacked full-width. */
+.overflow-menu {
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.overflow-menu.hidden {
+  display: none;
+}
+.overflow-menu .tool-pill,
+.overflow-menu .picker,
+.overflow-menu .ctxref {
+  width: 100%;
+  justify-content: flex-start;
+  max-width: none;
+}
+.tool-sep.hidden {
+  display: none;
 }
 .composer-right {
   display: flex;
@@ -955,6 +1053,9 @@ body {
 .tool-pill.icon-only {
   padding: 4px;
   border-radius: 8px;
+}
+.tool-pill.hidden {
+  display: none; /* e.g. the ⋯ overflow button when everything fits */
 }
 
 /* model button + popover menu */

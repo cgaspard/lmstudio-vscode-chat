@@ -78,6 +78,15 @@ export class OpencodeClient {
   }
 
   /**
+   * Live per-session busy state (`GET /session/status`): a map of sessionID ->
+   * { type: 'busy' | ... }. A session absent from the map is idle. Used by the
+   * goal loop's watchdog to avoid judging while a turn is still running.
+   */
+  async sessionStatus(): Promise<Record<string, { type?: string }>> {
+    return this.req('GET', '/session/status');
+  }
+
+  /**
    * Run a command or skill in a session (`POST /session/{id}/command`). The
    * server expands the command/skill template (with `arguments` substituted for
    * $ARGUMENTS) and runs it; output streams over the event channel like a normal

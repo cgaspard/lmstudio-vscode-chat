@@ -1,0 +1,16 @@
+version: 0.9.0
+date: 2026-07-02
+highlights:
+  - Goals — give the agent an objective with /goal and it keeps working, checking its own progress each round, until the goal is met.
+  - Steer mid-generation — type while the agent is working and it factors your new instructions into the work already in flight.
+  - The composer now adapts to narrow panels — extra controls tuck into a ⋯ menu instead of being pushed off-screen.
+added:
+  - /goal <objective> (or the ⊚ target button) starts an autonomous goal loop — after each turn an isolated judge on your local model decides whether the goal is met; if not, the agent auto-continues with specific feedback about what's still missing.
+  - A pinned goal bar shows the objective, round count, and elapsed time, with edit / pause / resume / clear controls. /goal clear ends the goal.
+  - Safety rails so a goal can never run away — a 25-round cap and stall detection (several rounds with no progress pause the goal and tell you why). Stop pauses the loop too.
+  - Steering — pressing Enter with text while a turn is running injects your message at the agent's next step, so it adjusts its current work; the stop button still stops.
+  - A ⋯ overflow menu in the composer — on narrow panels, lower-priority controls (server, agent, goal, thinking, attach) collapse into it and return when there's room.
+changed:
+  - The send button and Enter now have distinct jobs while the agent is working — the button stops, Enter steers.
+fixed: []
+removed: []

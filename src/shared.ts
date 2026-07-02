@@ -48,6 +48,18 @@ export interface UiSkill {
   slash?: boolean;
 }
 
+/** The active goal, as shown in the pinned goal bar. */
+export interface UiGoal {
+  objective: string;
+  /** Auto-continue rounds completed so far. */
+  iteration: number;
+  maxIterations: number;
+  /** Epoch ms when the goal was set (drives the elapsed display). */
+  startedAt: number;
+  /** 'active' = loop running; 'paused' = kept but not auto-continuing. */
+  state: 'active' | 'paused';
+}
+
 /** One MCP server's status, as shown in the /mcp panel. */
 export interface UiMcpServer {
   name: string;
@@ -101,6 +113,16 @@ export type HostToWebview =
   // Server-provided slash commands (skills + custom/built-in commands) to merge
   // into the composer's slash menu.
   | { type: 'commands'; commands: UiCommand[] }
+  // The active goal (pinned bar), or null when none.
+  | { type: 'goal'; goal: UiGoal | null }
+  // Loop lifecycle notices: judging, auto-continued, met, or stopped (with why).
+  | {
+      type: 'goalEvent';
+      kind: 'checking' | 'continued' | 'met' | 'stopped';
+      reason?: string;
+      iteration?: number;
+      why?: 'max-iterations' | 'stalled';
+    }
   | { type: 'error'; message: string };
 
 // ---- Webview -> Host -----------------------------------------------------
@@ -147,4 +169,9 @@ export type WebviewToHost =
   | { type: 'requestSkills' }
   // Run a server command/skill (e.g. typed "/fibonacci-helper some args").
   | { type: 'runCommand'; command: string; arguments?: string }
+  // Goal loop controls (the /goal command + the pinned bar's buttons).
+  | { type: 'setGoal'; objective: string }
+  | { type: 'pauseGoal' }
+  | { type: 'resumeGoal' }
+  | { type: 'clearGoal' }
   | { type: 'retryConnect' };

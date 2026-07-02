@@ -14,7 +14,7 @@ import { modelDisambiguator, modelIdentity } from '../core/models';
 import { isTodoCardCollapsed, summarizeTodos, Todo } from '../core/todos';
 import { buildAnswers, isEmptyAnswer, parseQuestionBlob, QInfo } from '../core/question';
 import type { MessageWithParts, OpencodeEvent, Part } from '../opencode/protocol';
-import type { HostToWebview, UiCommand, UiImage, UiMcpServer, UiModel, UiServer, UiSession, UiSkill, WebviewToHost } from '../shared';
+import type { HostToWebview, UiCommand, UiGoal, UiImage, UiMcpServer, UiModel, UiServer, UiSession, UiSkill, WebviewToHost } from '../shared';
 
 declare function acquireVsCodeApi(): {
   postMessage(msg: unknown): void;
@@ -55,6 +55,7 @@ interface State {
   activeFile: { path: string; chars: number } | null;
   includeActiveFile: boolean;
   activeSelection: { path: string; startLine: number; endLine: number; chars: number } | null;
+  activeGoal: UiGoal | null;
 }
 const persisted = (vscode.getState() as { thinking?: boolean; includeActiveFile?: boolean }) ?? {};
 const state: State = {
@@ -79,6 +80,7 @@ const state: State = {
   activeFile: null,
   includeActiveFile: persisted.includeActiveFile ?? true,
   activeSelection: null,
+  activeGoal: null,
 };
 
 // Live rendering bookkeeping (keyed by ids so events and history both upsert).
@@ -116,6 +118,11 @@ const icon = {
   plus: `<svg viewBox="0 0 16 16" width="16" height="16"><path fill="currentColor" d="M8.5 2.5v5h5v1h-5v5h-1v-5h-5v-1h5v-5z"/></svg>`,
   history: `<svg viewBox="0 0 16 16" width="16" height="16"><path fill="currentColor" d="M8 1.5a6.5 6.5 0 1 0 6.5 6.5h-1A5.5 5.5 0 1 1 8 2.5V1.5zM7.5 4v4.2l3.1 1.8.5-.86L8.5 7.7V4z"/><path fill="currentColor" d="M8 1.5 5.4 3.2 8 4.9z"/></svg>`,
   window: `<svg viewBox="0 0 16 16" width="15" height="15"><path fill="none" stroke="currentColor" stroke-width="1.2" d="M2.6 3.5h10.8a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H2.6a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1z"/><path fill="currentColor" d="M1.6 5.4h12.8v1H1.6z"/></svg>`,
+  target: `<svg viewBox="0 0 16 16" width="13" height="13"><circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.3"/><circle cx="8" cy="8" r="3" fill="none" stroke="currentColor" stroke-width="1.3"/><circle cx="8" cy="8" r="1" fill="currentColor"/></svg>`,
+  dots: `<svg viewBox="0 0 16 16" width="14" height="14"><circle cx="3" cy="8" r="1.4" fill="currentColor"/><circle cx="8" cy="8" r="1.4" fill="currentColor"/><circle cx="13" cy="8" r="1.4" fill="currentColor"/></svg>`,
+  pencil: `<svg viewBox="0 0 16 16" width="12" height="12"><path fill="currentColor" d="M11.5 1.6a1.4 1.4 0 0 1 2 0l.9.9a1.4 1.4 0 0 1 0 2l-8.2 8.2-3.5 1 1-3.5zM10.6 3.9l1.5 1.5 1.2-1.2-1.5-1.5z"/></svg>`,
+  pause: `<svg viewBox="0 0 16 16" width="12" height="12"><path fill="currentColor" d="M4.5 2.8h2.4v10.4H4.5zM9.1 2.8h2.4v10.4H9.1z"/></svg>`,
+  play: `<svg viewBox="0 0 16 16" width="12" height="12"><path fill="currentColor" d="M4.5 2.5 13 8l-8.5 5.5z"/></svg>`,
   send: `<svg viewBox="0 0 16 16" width="16" height="16"><path fill="currentColor" d="M1.7 14.3 15 8 1.7 1.7l-.2 4.8L10 8l-8.5 1.5z"/></svg>`,
   stop: `<svg viewBox="0 0 16 16" width="14" height="14"><rect x="3" y="3" width="10" height="10" rx="1.5" fill="currentColor"/></svg>`,
   trash: `<svg viewBox="0 0 16 16" width="14" height="14"><path fill="currentColor" d="M6 1.5h4l.5 1H14v1H2v-1h3.5zM3.5 4.5h9l-.7 9.2a1 1 0 0 1-1 .8H5.2a1 1 0 0 1-1-.8z"/></svg>`,
@@ -158,6 +165,17 @@ let connBanner!: HTMLElement;
 let ctxFileBtn!: HTMLButtonElement;
 let ctxFileName!: HTMLElement;
 let attachmentsEl!: HTMLElement;
+let goalBarEl!: HTMLElement;
+let goalTextEl!: HTMLElement;
+let goalMetaEl!: HTMLElement;
+let goalPauseBtn!: HTMLButtonElement;
+let goalTicker: ReturnType<typeof setInterval> | undefined;
+let overflowBtn!: HTMLButtonElement;
+let overflowMenuEl!: HTMLElement;
+/** Composer controls that may collapse into the ⋯ menu, in hide-order (first
+ * entries overflow first). `anchor` marks each control's home position so it
+ * can be restored to exactly where it came from when space returns. */
+let overflowItems: Array<{ el: HTMLElement; home: HTMLElement; anchor: Node }> = [];
 let agentSelect!: HTMLSelectElement;
 let statusEl!: HTMLElement;
 let historyOverlay!: HTMLElement;
@@ -202,6 +220,17 @@ function build(): void {
       <span class="ctx-label"></span>
     </div>
     <div class="composer">
+      <div id="goal-bar" class="goal-bar hidden">
+        <span class="goal-ico">${icon.target}</span>
+        <span class="goal-label">Pursuing goal</span>
+        <span id="goal-text" class="goal-text"></span>
+        <span id="goal-meta" class="goal-meta"></span>
+        <span class="goal-actions">
+          <button id="goal-edit" class="goal-btn" title="Edit goal">${icon.pencil}</button>
+          <button id="goal-pause" class="goal-btn" title="Pause goal">${icon.pause}</button>
+          <button id="goal-clear" class="goal-btn" title="Clear goal">${icon.trash}</button>
+        </span>
+      </div>
       <div class="composer-box">
         <div id="slash-menu" class="slash-menu hidden"></div>
         <div id="attachments" class="attachments hidden">
@@ -215,10 +244,12 @@ function build(): void {
             </button>
             <button id="btn-attach" class="tool-pill icon-only" title="Attach image">${icon.paperclip}</button>
             <button id="btn-think" class="tool-pill" title="Toggle thinking">${icon.brain}<span>Thinking</span></button>
-            <span class="tool-sep"></span>
+            <button id="btn-goal" class="tool-pill icon-only" title="Pursue a goal until it's met">${icon.target}</button>
+            <span class="tool-sep" id="tool-sep"></span>
             <button id="ctxfile" class="ctxref hidden" title="Include the open file as context">${icon.file}<span id="ctxfile-name"></span></button>
           </div>
           <div class="composer-right">
+            <button id="overflow-btn" class="tool-pill icon-only hidden" title="More options">${icon.dots}</button>
             <button id="model-btn" class="model-btn" title="Model — load / eject">
               <span class="model-dot"></span>
               <span class="model-btn-label">Model</span>
@@ -245,6 +276,7 @@ function build(): void {
         <div id="ctx-presets" class="ctx-presets"></div>
       </div>
     </div>
+    <div id="overflow-menu" class="model-menu overflow-menu hidden"></div>
     <div id="server-menu" class="model-menu hidden">
       <div class="model-menu-head"><span>LM Studio servers</span></div>
       <div id="server-menu-list" class="model-menu-list"></div>
@@ -291,6 +323,46 @@ function build(): void {
   ctxFileBtn = document.getElementById('ctxfile') as HTMLButtonElement;
   ctxFileName = document.getElementById('ctxfile-name')!;
   attachmentsEl = document.getElementById('attachments')!;
+  goalBarEl = document.getElementById('goal-bar')!;
+  goalTextEl = document.getElementById('goal-text')!;
+  goalMetaEl = document.getElementById('goal-meta')!;
+  goalPauseBtn = document.getElementById('goal-pause') as HTMLButtonElement;
+
+  // Goal bar controls + the composer Goal button.
+  document.getElementById('btn-goal')!.addEventListener('click', () => {
+    prefillGoalInput(state.activeGoal?.objective ?? '');
+  });
+  document.getElementById('goal-edit')!.addEventListener('click', () => {
+    prefillGoalInput(state.activeGoal?.objective ?? '');
+  });
+  goalPauseBtn.addEventListener('click', () => {
+    if (!state.activeGoal) {
+      return;
+    }
+    post({ type: state.activeGoal.state === 'paused' ? 'resumeGoal' : 'pauseGoal' });
+  });
+  document.getElementById('goal-clear')!.addEventListener('click', () => post({ type: 'clearGoal' }));
+
+  // Composer overflow: lower-priority controls collapse into the ⋯ menu when
+  // the panel is narrow, and return when there's room — nothing gets pushed
+  // off-screen. Hide-order: first entries collapse first.
+  overflowBtn = document.getElementById('overflow-btn') as HTMLButtonElement;
+  overflowMenuEl = document.getElementById('overflow-menu')!;
+  overflowItems = ['server-btn', 'agent-select', 'btn-goal', 'btn-think', 'tool-sep', 'btn-attach', 'ctxfile']
+    .map((id) => document.getElementById(id))
+    .filter((el): el is HTMLElement => !!el)
+    .map((el) => {
+      const anchor = document.createComment('overflow-home');
+      el.parentElement!.insertBefore(anchor, el);
+      return { el, home: el.parentElement as HTMLElement, anchor };
+    });
+  overflowBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    toggleOverflowMenu();
+  });
+  const composerRow = document.querySelector('.composer-row') as HTMLElement;
+  new ResizeObserver(() => layoutComposer()).observe(composerRow);
+  layoutComposer();
   agentSelect = document.getElementById('agent-select') as HTMLSelectElement;
   statusEl = document.getElementById('status')!;
   historyOverlay = document.getElementById('history-overlay')!;
@@ -341,7 +413,15 @@ function build(): void {
     }
   });
 
-  sendBtn.addEventListener('click', onSend);
+  // The button is context-sensitive: while a turn runs it SHOWS a stop icon, so
+  // clicking it always aborts — steering mid-turn is done with Enter instead.
+  sendBtn.addEventListener('click', () => {
+    if (state.busy) {
+      post({ type: 'abort' });
+      return;
+    }
+    onSend();
+  });
   inputEl.addEventListener('keydown', (e) => {
     // While the slash-command menu is open it owns the arrow / tab / esc keys.
     if (slashMenuOpen()) {
@@ -368,9 +448,9 @@ function build(): void {
     }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      if (!state.busy) {
-        onSend();
-      }
+      // Runs while busy too: Enter with text STEERS the in-flight turn
+      // (onSend handles it); Enter on an empty box does nothing.
+      onSend();
     }
   });
   inputEl.addEventListener('input', () => {
@@ -468,6 +548,13 @@ function build(): void {
     if (!serverMenu.classList.contains('hidden') && !serverMenu.contains(t) && !serverBtn.contains(t)) {
       closeServerMenu();
     }
+    if (
+      !overflowMenuEl.classList.contains('hidden') &&
+      !overflowMenuEl.contains(t) &&
+      !overflowBtn.contains(t)
+    ) {
+      closeOverflowMenu();
+    }
   });
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
@@ -477,6 +564,7 @@ function build(): void {
       }
       closeModelMenu();
       closeServerMenu();
+      closeOverflowMenu();
     }
   });
   agentSelect.addEventListener('change', () => {
@@ -497,8 +585,9 @@ function autoGrow(): void {
 interface SlashCommand {
   name: string;
   hint: string;
-  /** Local UI commands run a callback; server commands carry their kind here. */
-  run?: () => void;
+  /** Local UI commands run a callback (given any trailing args the user typed);
+   * server commands carry their kind in `server` instead. */
+  run?: (args?: string) => void;
   /** Set for server-provided commands/skills (invoked via runCommand). */
   server?: { command: string; source: 'command' | 'skill'; takesArgs: boolean };
 }
@@ -510,6 +599,7 @@ const LOCAL_COMMANDS: SlashCommand[] = [
   { name: '/file', hint: 'Toggle including the open file as context', run: toggleFileCommand },
   { name: '/mcp', hint: 'Show connected MCP servers and their status', run: mcpCommand },
   { name: '/skills', hint: 'Show the skills available to the model', run: skillsCommand },
+  { name: '/goal', hint: 'Pursue a goal until it is met — /goal <objective>, /goal clear', run: goalCommand },
   { name: '/help', hint: 'List the available slash commands', run: helpCommand },
 ];
 
@@ -565,6 +655,30 @@ function mcpCommand(): void {
 function skillsCommand(): void {
   addSysChip('Checking skills…');
   post({ type: 'requestSkills' });
+}
+
+// /goal <objective> starts an autonomous goal loop; /goal clear ends it; bare
+// /goal prefills the input so the user can type the objective.
+function goalCommand(args?: string): void {
+  const a = (args ?? '').trim();
+  if (!a) {
+    prefillGoalInput(state.activeGoal?.objective ?? '');
+    return;
+  }
+  if (a.toLowerCase() === 'clear' || a.toLowerCase() === 'stop') {
+    post({ type: 'clearGoal' });
+    addSysChip('Goal cleared.');
+    return;
+  }
+  post({ type: 'setGoal', objective: a });
+}
+
+// Put "/goal <current-or-empty>" in the composer so the user can type/edit the
+// objective and press Enter — the same pattern as arg-taking server commands.
+function prefillGoalInput(existing: string): void {
+  inputEl.value = existing ? `/goal ${existing}` : '/goal ';
+  inputEl.focus();
+  autoGrow();
 }
 
 // Render the discovered skills as an inline panel — one row per skill with its
@@ -805,7 +919,7 @@ function executeCommand(cmd: SlashCommand, args = ''): void {
   if (cmd.server) {
     post({ type: 'runCommand', command: cmd.server.command, ...(args.trim() ? { arguments: args.trim() } : {}) });
   } else {
-    cmd.run?.();
+    cmd.run?.(args);
   }
 }
 
@@ -859,11 +973,22 @@ function onSend(): void {
   if (state.compacting) {
     return; // input is blocked while a /compact runs
   }
-  if (state.busy) {
-    post({ type: 'abort' });
-    return;
-  }
   const text = inputEl.value.trim();
+  if (state.busy) {
+    // Mid-generation: Enter with text STEERS — OpenCode injects the message at
+    // the agent's next step boundary, so the model reads it and factors it into
+    // the work already in flight (verified live: an instruction injected between
+    // tool steps changed the ongoing task). Enter on an empty box is a no-op;
+    // aborting belongs to the stop button. For a long single generation with no
+    // tool steps the injection lands when that step finishes — same behavior as
+    // Claude Code / Codex.
+    if (!text && !state.pendingImages.length) {
+      return;
+    }
+    if (!text.startsWith('/')) {
+      setStatus('Steering — the agent will pick this up at its next step.');
+    }
+  }
   if (!text && !state.pendingImages.length) {
     return;
   }
@@ -919,6 +1044,50 @@ function renderActiveFile(): void {
   ctxFileBtn.title = state.includeActiveFile
     ? `Including ${state.activeFile.path} as context — click to exclude`
     : `${state.activeFile.path} excluded — click to include as context`;
+  layoutComposer(); // pill visibility changes the row's width needs
+}
+
+// The pinned goal bar (Codex-style): "🎯 Pursuing goal <objective> • round n/N
+// · elapsed" with edit / pause-resume / clear controls. Hidden when no goal.
+function renderGoalBar(): void {
+  const g = state.activeGoal;
+  if (!g) {
+    goalBarEl.classList.add('hidden');
+    if (goalTicker) {
+      clearInterval(goalTicker);
+      goalTicker = undefined;
+    }
+    return;
+  }
+  goalBarEl.classList.remove('hidden');
+  goalBarEl.classList.toggle('paused', g.state === 'paused');
+  goalBarEl.querySelector('.goal-label')!.textContent =
+    g.state === 'paused' ? 'Goal paused' : 'Pursuing goal';
+  goalTextEl.textContent = g.objective;
+  goalTextEl.title = g.objective;
+  goalMetaEl.textContent =
+    `• round ${g.iteration}/${g.maxIterations} · ${formatElapsed(Date.now() - g.startedAt)}`;
+  goalPauseBtn.innerHTML = g.state === 'paused' ? icon.play : icon.pause;
+  goalPauseBtn.title = g.state === 'paused' ? 'Resume goal' : 'Pause goal';
+  // Tick the elapsed display once a second while a goal is pinned.
+  if (!goalTicker) {
+    goalTicker = setInterval(() => {
+      const cur = state.activeGoal;
+      if (cur) {
+        goalMetaEl.textContent =
+          `• round ${cur.iteration}/${cur.maxIterations} · ${formatElapsed(Date.now() - cur.startedAt)}`;
+      }
+    }, 1000);
+  }
+}
+
+function formatElapsed(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  if (s < 60) {
+    return `${s}s`;
+  }
+  const m = Math.floor(s / 60);
+  return m < 60 ? `${m}m ${s % 60}s` : `${Math.floor(m / 60)}h ${m % 60}m`;
 }
 
 function addImage(file: File): Promise<void> {
@@ -1039,6 +1208,7 @@ function renderModels(): void {
   if (!modelMenu.classList.contains('hidden')) {
     renderModelMenu();
   }
+  layoutComposer(); // the model label's width changed — refit the row
 }
 
 function renderModelMenu(): void {
@@ -1207,6 +1377,67 @@ function renderServerMenu(): void {
     });
     serverMenuList.appendChild(row);
   }
+}
+
+// ---- Composer overflow (⋯) -------------------------------------------------
+
+/**
+ * Fit the composer row: restore every collapsible control to its home spot,
+ * then move them (in hide-order) into the ⋯ menu until nothing overflows. The
+ * separator is just hidden rather than moved (it'd look odd in a menu). The ⋯
+ * button is revealed on the first move so its own width is part of the math.
+ */
+function layoutComposer(): void {
+  const row = document.querySelector('.composer-row') as HTMLElement | null;
+  if (!row || !overflowItems.length) {
+    return;
+  }
+  for (const it of overflowItems) {
+    if (it.el.id === 'tool-sep') {
+      it.el.classList.remove('hidden');
+    } else if (it.el.parentElement !== it.home) {
+      it.home.insertBefore(it.el, it.anchor.nextSibling);
+    }
+  }
+  let moved = 0;
+  for (const it of overflowItems) {
+    if (row.scrollWidth <= row.clientWidth) {
+      break;
+    }
+    if (it.el.id === 'tool-sep') {
+      it.el.classList.add('hidden');
+      continue;
+    }
+    overflowMenuEl.appendChild(it.el);
+    if (++moved === 1) {
+      overflowBtn.classList.remove('hidden'); // now its width counts too
+    }
+  }
+  if (moved === 0) {
+    overflowBtn.classList.add('hidden');
+    closeOverflowMenu();
+  }
+}
+
+function toggleOverflowMenu(): void {
+  if (overflowMenuEl.classList.contains('hidden')) {
+    const r = overflowBtn.getBoundingClientRect();
+    const width = Math.min(240, window.innerWidth - 16);
+    let left = r.right - width;
+    if (left < 8) {
+      left = 8;
+    }
+    overflowMenuEl.style.left = left + 'px';
+    overflowMenuEl.style.width = width + 'px';
+    overflowMenuEl.style.bottom = window.innerHeight - r.top + 6 + 'px';
+    overflowMenuEl.classList.remove('hidden');
+  } else {
+    closeOverflowMenu();
+  }
+}
+
+function closeOverflowMenu(): void {
+  overflowMenuEl.classList.add('hidden');
 }
 
 function toggleServerMenu(): void {
@@ -2400,6 +2631,24 @@ window.addEventListener('message', (e: MessageEvent<HostToWebview>) => {
       break;
     case 'commands':
       setServerCommands(msg.commands);
+      break;
+    case 'goal':
+      state.activeGoal = msg.goal;
+      renderGoalBar();
+      break;
+    case 'goalEvent':
+      if (msg.kind === 'checking') {
+        setStatus('Checking goal…');
+      } else if (msg.kind === 'continued') {
+        setStatus(`Goal round ${msg.iteration ?? '?'}: ${msg.reason ?? 'continuing…'}`);
+      } else if (msg.kind === 'met') {
+        setStatus('');
+        addSysChip(`🎯 Goal met — ${msg.reason ?? 'done'}`);
+      } else if (msg.kind === 'stopped') {
+        setStatus('');
+        const why = msg.why === 'stalled' ? 'no progress across several rounds' : 'iteration cap reached';
+        addSysChip(`Goal paused (${why}) — ${msg.reason ?? ''}\nResume from the goal bar, or /goal clear to end it.`);
+      }
       break;
     case 'error':
       showError(msg.message);
