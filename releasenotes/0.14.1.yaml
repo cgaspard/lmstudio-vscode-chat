@@ -1,0 +1,13 @@
+version: 0.14.1
+date: 2026-07-22
+highlights:
+  - Rewritten README and Marketplace listing — the page now leads with what the extension actually does and groups every feature into scannable sections instead of one flat list.
+  - Roughly fifteen shipped capabilities were never documented on the Marketplace page until now, including goals, mid-generation steering, editor-selection context, the live todo checklist, slash commands, and session restore.
+added: []
+changed:
+  - The README opens with the agent itself — real file edits, shell, inline permissions, build/plan modes — running entirely on your local LM Studio models, and the feature list is now organized under headings (the agent, goals, steering, your models, context, sessions, extend it).
+  - Removed the "Why" section, which framed the project against other extensions' licensing rather than describing this one.
+  - Documented features that shipped in earlier releases but never reached the README - /goal autonomous loops with the local-model judge, the 25-round cap and stall detection, goal revision detection, mid-turn steering, highlight-to-share editor selection, the per-turn todo checklist, the slash command menu, /compact, /skills, image attachments with lightbox, the context meter, context-scaled output budgets, and per-workspace session restore.
+fixed:
+  - The settings table listed lmstudioCode.minContextLength as 16384; the actual default has been 32768.
+removed: []

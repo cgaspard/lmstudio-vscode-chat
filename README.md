@@ -1,45 +1,88 @@
 # LM Studio Code
 
-An agentic coding panel for **your local [LM Studio](https://lmstudio.ai) models** — a Claude Code / Codex–style chat experience that runs entirely on your machine.
+**A real coding agent in VS Code — running entirely on the models you already have in LM Studio.**
 
-Under the hood it drives the open-source [**OpenCode**](https://opencode.ai) agent (Apache/MIT) as a headless server, pointed at LM Studio's OpenAI-compatible endpoint. You get a real agent — file edits, shell tools, permissions, multi-step reasoning — with no cloud model and no API key.
+Not autocomplete. This is a full agent panel: it reads and edits your files, runs shell commands, asks permission before it touches anything, works through a todo list, and keeps going until the job is done. Everything runs on your machine against [LM Studio](https://lmstudio.ai) — no cloud round-trip, no API key, no token bill, works on a plane.
+
+Powered by the open-source [**OpenCode**](https://opencode.ai) agent, bundled right in. Install, pick a model, start working.
 
 ## Demo
 
 ![LM Studio Code demo](media/sample.gif)
 
-## Why
+---
 
-The official Claude Code and Codex VS Code extensions are **not open source**, so they can't be adapted to local models. The *CLIs* behind several agents are open, though — and OpenCode in particular ships a headless server + provider-agnostic model layer that happily talks to LM Studio. This extension wraps that server in a native chat panel.
+## The agent
 
-## Features
+- **Real tools** — reads files, writes edits, runs shell commands, searches your codebase. Every step shows up as a tool card you can expand.
+- **You stay in control** — inline permission prompts on every action: *Allow once*, *Allow always*, or *Deny*.
+- **Build or plan mode** — `build` edits your code; `plan` is strictly read-only for when you just want a strategy.
+- **Live todo list** — the agent's plan renders as a checklist that ticks off in place as it works, with a progress count.
+- **See it think** — reasoning models get collapsible *Thinking* blocks, toggleable on and off.
+- **Streaming everything** — responses render as markdown with syntax-highlighted code as they arrive.
 
-- **Chat panel** in the Activity Bar (and "Open in Editor Tab" for parallel conversations)
-- **Streaming** responses with markdown + code rendering
-- **Reasoning** blocks (collapsible "Thinking")
-- **Agent tools** — file reads/edits, shell, search — surfaced as tool cards
-- **MCP servers** — extend the agent with [Model Context Protocol](https://modelcontextprotocol.io) tools; servers you already configured for **Claude Code** (`.mcp.json`) or **VS Code** (`.vscode/mcp.json`) are picked up automatically. Type `/mcp` to see their live status
-- **Permission prompts** — Allow once / Allow always / Deny, inline
-- **Model picker** populated live from LM Studio (shows loaded ● / unloaded ○ + context size)
-- **Agent modes** — `build` (can edit) and `plan` (read-only)
-- **Session history** — browse, resume, rename-by-first-message, delete
-- **Auto-context** — reloads the selected model with an adequate context window via the `lms` CLI so OpenCode's large system prompt doesn't overflow a 4096-token default
-- **Multiple servers with optional API keys** — register several LM Studio instances (local or remote) in the servers menu and switch between them; a per-server API key (sent as `Authorization: Bearer`) supports remote instances behind an authenticating reverse proxy. Keys live in VS Code's encrypted Secret Storage — never in settings files, and never sent back to the UI
+## Goals — point it at an objective and walk away
 
-## Requirements
+- **`/goal <objective>`** starts an autonomous loop. After each turn, an isolated judge — running on *your* local model — decides whether the goal is actually met. If it isn't, the agent continues with specific feedback about what's still missing.
+- **A pinned goal bar** tracks the objective, round count, and elapsed time, with edit / pause / resume / clear controls.
+- **It can't run away** — a 25-round cap plus stall detection that pauses the loop and tells you why when progress flatlines.
+- **It listens** — change your mind mid-goal and it notices, offering a one-click *Update goal* instead of chasing a stale target.
+
+## Steer it mid-flight
+
+Type while the agent is working and hit Enter — your instructions get injected at its next step, so it adjusts work already in progress instead of you stopping and starting over. The stop button still stops.
+
+## Your models, your machine
+
+- **Live model picker** — every model in LM Studio, showing loaded ● / unloaded ○, context size, publisher, format (MLX/GGUF), and quantization, so same-named models are never ambiguous. Load or eject right from the menu.
+- **Context handled for you** — the extension reloads your model with an adequate context window via the `lms` CLI, so a 4096-token default never blows up mid-task.
+- **Room to think** — the output budget scales with the context window (up to 32k), so long reasoning doesn't get chopped off mid-answer. If a response does hit the ceiling, you're told.
+- **Multiple servers** — register several LM Studio instances, local or remote, and switch between them in a click.
+- **Per-server API keys** — connect to remote instances behind authentication. Keys live in VS Code's encrypted Secret Storage: never in a settings file, never sent back to the UI, never inherited by tool processes the agent spawns.
+- **Quiet by default** — a 30-second liveness check shared across panels, paused when hidden. Your LM Studio log stays readable, and a busy server no longer flashes "offline" mid-generation.
+
+## Context, without the busywork
+
+- **Highlight to share** — select code in any file and it's automatically attached to your next message, exact lines and range included. No pill to manage, no setup.
+- **`/file`** toggles the open file as context.
+- **Paste images** — screenshots and mockups attach as labelled chips with dimensions; click for a full-size lightbox.
+- **`/compact`** summarizes the conversation to reclaim context when you're running low, and shows you the summary it produced.
+- **A context meter** above the composer so you always know where you stand.
+
+## Sessions that survive
+
+- **Auto-restored** — reopen VS Code and your last conversation is right where you left it, per workspace.
+- **Full history** — browse, resume, rename, and delete past sessions. Empty chats never clutter the list.
+- **Work in parallel** — *Open in Editor Tab* gives a conversation its own tab, so you can run several at once.
+
+## Extend it — MCP servers and skills
+
+- **MCP tools** — browser automation, databases, issue trackers, docs. Local (stdio) and remote (http/sse) servers both work, and their tools get the same tool cards and permission prompts as built-ins.
+- **Nothing to re-enter** — the `.mcp.json` you already wrote for **Claude Code** and the `.vscode/mcp.json` you wrote for **VS Code** are discovered automatically.
+- **`/mcp`** shows live status per server: 🟢 connected, 🟡 disabled, 🔴 failed with the reason. A broken server never blocks your chat.
+- **`/skills`** lists the skills available to the model with their source (project / global / built-in) and path — your `.opencode/skill` and `.claude/skills` are picked up too.
+- **Slash commands** — type `/` for a filterable menu: `/clear`, `/compact`, `/file`, `/mcp`, `/skills`, `/goal`, `/help`, plus your own skills and OpenCode commands, with arguments.
+
+## Fits your window
+
+The panel lives in the Activity Bar (or the secondary side bar), and the composer adapts to narrow layouts — lower-priority controls tuck into a ⋯ menu instead of getting pushed off-screen.
+
+---
+
+## Quick start
+
+1. Start LM Studio's server and load a model.
+2. Install this extension.
+3. Click the spark icon in the Activity Bar.
+4. Pick a model, type a task, hit Enter.
+
+### Requirements
 
 - **VS Code** 1.104+
 - **[LM Studio](https://lmstudio.ai)** running with its local server started (default `http://127.0.0.1:1234`) and at least one chat model
 - *(recommended)* the **`lms` CLI** for automatic context-window management
 
 > **[OpenCode](https://opencode.ai) is bundled** — the matching platform binary ships inside the extension, so there's nothing extra to install and it works offline. Power users can point at their own build with `lmstudioCode.opencodePath`; an install on your `PATH` or in `~/.opencode/bin` is preferred over the bundled copy if present.
-
-## Quick start
-
-1. Start LM Studio's server and load a model.
-2. Install this extension (or run it from source — see below).
-3. Click the spark icon in the Activity Bar.
-4. Pick a model, type a task, hit Enter.
 
 ### Beta channel
 
@@ -59,7 +102,7 @@ any time with **Switch to Release Version**.
 | `lmstudioCode.defaultModel` | _(first)_ | Default model id |
 | `lmstudioCode.agent` | `build` | `build` or `plan` |
 | `lmstudioCode.autoEnsureContext` | `true` | Reload model with adequate context before prompting |
-| `lmstudioCode.minContextLength` | `16384` | Context length to (re)load with |
+| `lmstudioCode.minContextLength` | `32768` | Context length to (re)load with |
 | `lmstudioCode.gpuOffload` | `max` | GPU offload for `lms load` |
 | `lmstudioCode.healthCheckSeconds` | `30` | Health/model poll cadence while connected (5–600). Disconnected retries stay at 5s; the model list refreshes immediately while the model picker is open |
 | `lmstudioCode.mcpServers` | `{}` | MCP servers to expose to the agent (in addition to auto-discovered ones) |
