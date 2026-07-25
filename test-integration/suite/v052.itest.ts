@@ -44,7 +44,9 @@ describe('v0.5.2 webview features', function () {
       assert.ok(stat, 'gen-stat should be present');
       assert.match(stat!, /tok\/s/, 'stat should report a token rate');
       assert.match(stat!, /^~/, 'estimate should be prefixed with ~');
-      assert.match(stat!, /~100 tokens/, 'should estimate ~100 tokens from 400 chars');
+      // Wording changed in v0.15 to fit the full picture, e.g.
+      // "build · 8.0k in · 876 out (776 thinking) · 8.9k total · 21.1s · 42 tok/s".
+      assert.match(stat!, /~100 out\b/, 'should estimate ~100 tokens from 400 chars');
     });
 
     it('shows NO gen-stat for a tool-only turn (no streamed text)', async () => {
@@ -87,10 +89,16 @@ describe('v0.5.2 webview features', function () {
     });
 
     it('closes the menu once the load returns', async () => {
-      // menu is currently open with a load in flight; the 'models' message
-      // (load returned) should dismiss it.
-      const openBefore = await count('#model-menu:not(.hidden)');
-      assert.strictEqual(openBefore, 1, 'menu should be open during load');
+      // Re-open and re-arm rather than inheriting the previous test's state.
+      // The host drives a real LM Studio, so it may already have answered that
+      // load and consumed the close-on-load flag — asserting the menu is still
+      // open here was a race, not a property of the behavior under test.
+      if ((await count('#model-menu:not(.hidden)')) === 0) {
+        assert.ok(await click('#model-btn'));
+        await waitFor('#model-menu:not(.hidden)', (n) => n === 1);
+      }
+      await waitFor('.model-row .model-action.load', (n) => n >= 1);
+      assert.ok(await click('.model-row .model-action.load'), 'arms close-on-load');
       await post({ type: 'models', models: MODELS.map((m, i) => ({ ...m, loaded: i === 0 })), currentModel: 'qwen/qwen3-27b' });
       await waitFor('#model-menu:not(.hidden)', (n) => n === 0);
       assert.strictEqual(await count('#model-menu:not(.hidden)'), 0, 'menu should close after load returns');

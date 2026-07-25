@@ -6,6 +6,7 @@ import * as vscode from 'vscode';
 import { ExtensionConfig, getConfig } from '../config';
 import { resolveBinaryPath } from '../core/binary';
 import { clampContext } from '../core/context';
+import { variantsForModel } from '../core/effort';
 import { augmentedPath } from '../core/mcp';
 import { LMStudioClient } from '../lmstudio/client';
 import { log, logError } from '../logger';
@@ -284,6 +285,12 @@ export class OpencodeServerManager {
           // <think> blocks before answering (8192 truncated them mid-thought),
           // but still a fraction of the window so input isn't crowded out.
           limit: { context: perModel, output: Math.min(32768, Math.floor(perModel / 4)) },
+          // Reasoning-effort levels, selectable per message via PromptBody.variant.
+          // Declared unconditionally for every model — identical for all of them —
+          // so this config never depends on a user setting and changing effort
+          // never needs a server restart. Naming a variant the model doesn't
+          // support is a verified silent no-op, so over-declaring is free.
+          variants: variantsForModel(),
         };
       }
     } catch (err) {

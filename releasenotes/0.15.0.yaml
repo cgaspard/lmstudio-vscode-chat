@@ -1,0 +1,34 @@
+version: 0.15.0
+date: 2026-07-25
+highlights:
+  - Reasoning effort is now a real control. Pick how hard the model thinks per model — Auto, Off, or the depths it actually supports — from the model menu, the composer pill, or /effort.
+  - The levels are derived from what each model reports, not hardcoded. Most local reasoning models only support on/off, so they show on/off rather than a low/medium/high slider that would do nothing.
+  - Effort now travels as a real request parameter (reasoning_effort) instead of appending /no_think to your message, so it works across model families and leaves your prompt clean.
+  - Tokens/sec is now accurate. The rate excludes tool-execution time (which was being counted as generation time and dragging the number down) and uses the exact token counts LM Studio reports rather than estimating from response length.
+  - Thinking blocks now collapse when a turn finishes, labelled with how long the model thought - "Thought for 21.1s - 776 tokens". On reasoning-heavy turns the thinking can be ~90% of the output and was burying the answer.
+  - User-defined agents. Define one as .opencode/agent/<name>.md and it appears in the agent picker - with its own system prompt, model, tool restrictions and reasoning effort.
+  - Agents you mark as subagents are not in the picker at all - the model discovers them on its own and delegates through the built-in task tool, running them in a separate context that does not consume your conversation.
+  - Bundled OpenCode moves to 1.18.4.
+added:
+  - Reasoning effort selector in the model menu footer, alongside the context-window presets, scoped per model.
+  - The composer thinking pill is now an effort cycler showing the current level; alt-click toggles whether reasoning blocks are displayed.
+  - /effort slash command — "/effort" reports the current level and what the model supports, "/effort off|low|med|high|auto" sets it.
+  - lmstudioCode.defaultThinkingEffort setting for the starting level on models you have not chosen one for.
+  - Models that report no reasoning support hide the effort control entirely instead of showing a dead one.
+  - The agent picker is populated from the server rather than a hardcoded build/plan pair, so any agent you define shows up (badged "custom"). A stored agent that no longer exists falls back to build instead of pointing at nothing.
+  - /agents lists both halves of the roster - the agents you can select, and the ones only the model can delegate to - and explains where to define your own.
+  - /agents new <name> scaffolds .opencode/agent/<name>.md with commented frontmatter and opens it for editing.
+changed:
+  - The generation stat under each turn now reports the whole cost, not just what was generated - agent, prompt tokens in, output tokens (with the thinking share), the combined total, elapsed time and tok/s. A turn can be 8k in for 2 tokens out, which the old output-only number hid completely. The "~" prefix appears only when the figures are estimates.
+  - Each turn names the agent that ran it, so you can confirm the picker selection actually took effect.
+  - A task tool card now shows which subagent it delegated to, instead of every delegation looking identical.
+  - Reasoning blocks stream open so you can watch the model think, then auto-collapse at the end of the turn. A block you opened or closed yourself is left alone.
+  - The thinking block summary now has a hover surface and a proper hit area - at 75% opacity with a 4px chevron it read as static text rather than a control.
+  - Thinking on/off and reasoning visibility are now separate. The single "Thinking" toggle drove both generation and display; effort controls generation, and alt-clicking the pill controls display.
+  - Goal-loop judge turns pin reasoning off through the variant parameter rather than the qwen-only /no_think string, so fast verdicts now work on every model family.
+  - Reasoning effort is remembered per model, since effort support is a per-model property. A level carried over from another model is clamped down to what the new one supports rather than sent blindly.
+  - Bundled OpenCode updated from 1.17.18 to 1.18.4.
+fixed:
+  - The context meter assumed a fixed overhead of 11k tokens for build and 6k for plan. It is now computed per agent, and grows with the number of delegatable agents, since each one's description is appended to the task tool the primary agent sees.
+  - Tokens/sec counted tool-execution and step-boundary time as generation time, understating the rate by a wide margin on any turn that used tools.
+removed: []

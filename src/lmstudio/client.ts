@@ -3,6 +3,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { lmStudioRestRoot } from '../config';
+import type { ReasoningCapability } from '../core/effort';
 import { ProbeStatus } from '../core/health';
 import { log, logError } from '../logger';
 
@@ -37,6 +38,14 @@ export interface LMStudioModel {
   arch?: string;
   publisher?: string; // e.g. "unsloth", "lmstudio-community" — disambiguates same-named models
   format?: string; // runtime format, e.g. "MLX" or "GGUF" (from compatibility_type)
+  /**
+   * Declared reasoning support, from `/api/v1/models` capabilities.reasoning.
+   * `null` = the model explicitly reports none (hide the effort control);
+   * `undefined` = unknown, because only /api/v1 can report this and we may have
+   * come in via an older fallback endpoint. Unknown is never treated as
+   * unsupported — see src/core/effort.ts.
+   */
+  reasoning?: ReasoningCapability | null;
 }
 
 /** Discovery + lifecycle helper for a local LM Studio server. */
@@ -250,6 +259,16 @@ export class LMStudioClient {
               arch: m.architecture ?? m.arch,
               publisher: m.publisher,
               format: prettyFormat(m.format),
+              // Observed shape: { allowed_options: ["off","on"], default: "on" },
+              // absent/null on non-reasoning models. Only /api/v1 reports it.
+              reasoning: caps.reasoning
+                ? {
+                    allowedOptions: Array.isArray(caps.reasoning.allowed_options)
+                      ? caps.reasoning.allowed_options
+                      : [],
+                    default: caps.reasoning.default,
+                  }
+                : null,
             };
           });
       }

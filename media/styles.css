@@ -346,6 +346,23 @@ body {
 .reasoning summary:hover {
   opacity: 1;
 }
+/* The summary is the only affordance saying this block collapses, and at 0.75
+   opacity with a 4px chevron it read as static text. Give it a hit area and a
+   hover surface so it looks like the control it is. */
+.reasoning summary {
+  border-radius: 5px;
+  padding: 2px 6px 2px 4px;
+  margin-left: -4px;
+}
+.reasoning summary:hover {
+  background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.12));
+}
+.reasoning summary:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder, var(--accent));
+}
+.reasoning-label {
+  font-variant-numeric: tabular-nums;
+}
 .reasoning .chev {
   width: 0;
   height: 0;
@@ -1169,6 +1186,21 @@ body {
   background: var(--accent);
   color: var(--accent-fg);
   border-color: transparent;
+}
+/* Hidden entirely for models that report no reasoning support, so the menu
+   shows no control rather than a dead one. */
+.model-menu-foot.hidden {
+  display: none;
+}
+/* Capability caveat under the effort presets (e.g. "on/off only"). Only
+   rendered when there's something worth saying, so it collapses when empty. */
+.effort-note {
+  font-size: 10.5px;
+  line-height: 1.35;
+  color: var(--vscode-descriptionForeground);
+}
+.effort-note:empty {
+  display: none;
 }
 .model-empty {
   padding: 16px;

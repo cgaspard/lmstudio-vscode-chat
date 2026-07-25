@@ -4,7 +4,15 @@ import * as vscode from 'vscode';
 import { getConfig } from '../config';
 import { ServerRegistry } from '../connection';
 import { commandTakesArgs } from '../core/commands';
+import { type AgentInfo, delegatableAgents, pickableAgents, resolveAgent } from '../core/agents';
 import { clampContext } from '../core/context';
+import {
+  type EffortLevel,
+  type ReasoningCapability,
+  fallbackPromptText,
+  resolveLevel,
+  variantForLevel,
+} from '../core/effort';
 import {
   Goal,
   buildContinuePrompt,
@@ -27,10 +35,11 @@ import { LMStudioClient } from '../lmstudio/client';
 import { log, logError } from '../logger';
 import { discoverMcpServers } from '../mcp/discovery';
 import { OpencodeClient } from '../opencode/client';
-import { OpencodeEvent, PromptBody } from '../opencode/protocol';
+import { OpencodeAgent, OpencodeEvent, PromptBody } from '../opencode/protocol';
 import { Disposable, OpencodeServerManager } from '../opencode/serverManager';
 import {
   HostToWebview,
+  UiAgent,
   UiCommand,
   UiGoal,
   UiImage,
@@ -85,7 +94,9 @@ export class ChatBridge {
   private client: OpencodeClient | undefined;
   private currentSessionID: string | null = null;
   private currentModel: string | null = null;
-  private agent: 'build' | 'plan';
+  private agent: string;
+  /** Last agent roster from GET /agent, for the picker and overhead math. */
+  private lastAgents: OpencodeAgent[] = [];
   private eventAbort: AbortController | undefined;
   private disposed = false;
   private connected = false;
@@ -431,7 +442,7 @@ export class ChatBridge {
           this.maybeOfferGoalRevision(msg.text);
           await this.handleSend(
             msg.text,
-            msg.thinking,
+            msg.effort,
             msg.images ?? [],
             msg.includeActiveFile ?? false,
             msg.includeSelection ?? false,
@@ -553,6 +564,12 @@ export class ChatBridge {
         case 'requestSkills':
           await this.sendSkills();
           break;
+        case 'requestAgents':
+          await this.sendAgents();
+          break;
+        case 'createAgent':
+          await this.createAgent(msg.name);
+          break;
         case 'runCommand':
           await this.handleRunCommand(msg.command, msg.arguments);
           break;
@@ -649,6 +666,8 @@ export class ChatBridge {
         lmStudioConnected: false,
         lmStudioAuthRequired: authRequired,
         minContext: cfg.minContextLength,
+        defaultEffort: cfg.defaultThinkingEffort,
+        agents: [],
       });
       const text = authRequired
         ? active.hasApiKey
@@ -679,6 +698,8 @@ export class ChatBridge {
         serverReady: false,
         lmStudioConnected: true,
         minContext: cfg.minContextLength,
+        defaultEffort: cfg.defaultThinkingEffort,
+        agents: [],
       });
       return 'failed';
     }
@@ -694,6 +715,12 @@ export class ChatBridge {
 
     this.startEventStream();
 
+    // Agents come from the server (built-ins + anything the user defined on
+    // disk). A stored selection that no longer exists falls back to build, so a
+    // renamed or deleted agent can't leave the composer pointing at nothing.
+    const agents = await this.loadAgents();
+    this.agent = resolveAgent(this.agent, this.lastAgents as AgentInfo[]);
+
     this.lastPostedModelsJson = JSON.stringify({ models, currentModel: this.currentModel });
     this.post({
       type: 'init',
@@ -704,6 +731,8 @@ export class ChatBridge {
       serverReady: true,
       lmStudioConnected: true,
       minContext: cfg.minContextLength,
+      defaultEffort: cfg.defaultThinkingEffort,
+      agents,
     });
 
     await this.sendSessions();
@@ -849,6 +878,91 @@ export class ChatBridge {
   }
 
   /**
+   * Both halves of the agent roster for the `/agents` panel: the ones the user
+   * can select, and the ones only the model can reach by delegating through the
+   * `task` tool. They are different sets — `mode: subagent` never appears in the
+   * picker, `mode: primary` is never delegated to — and showing both is the
+   * point, since a subagent is invisible in the composer yet still costs the
+   * primary session context.
+   */
+  private async sendAgents(): Promise<void> {
+    await this.loadAgents(); // refresh this.lastAgents
+    const toUi = (a: AgentInfo): UiAgent => ({
+      name: a.name,
+      description: a.description,
+      mode: a.mode,
+      native: a.native,
+      modelID: a.model?.modelID ?? undefined,
+    });
+    const all = this.lastAgents as AgentInfo[];
+    this.post({
+      type: 'agents',
+      agents: pickableAgents(all).map(toUi),
+      delegatable: delegatableAgents(all).map(toUi),
+    });
+  }
+
+  /**
+   * Scaffold `.opencode/agent/<name>.md` and open it in the editor. OpenCode
+   * discovers agents from disk only at startup — there is no runtime CRUD, and
+   * a PATCH /config carrying an agent silently no-ops — so the server has to be
+   * restarted before the new agent exists. We write the file and tell the user;
+   * the restart happens on their next explicit restart or reload, which keeps a
+   * half-written definition from tearing down a live session.
+   */
+  private async createAgent(rawName: string): Promise<void> {
+    const name = rawName.trim().toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '');
+    if (!name) {
+      this.post({ type: 'error', message: 'Agent name must contain a letter or number.' });
+      return;
+    }
+    const root = vscode.workspace.workspaceFolders?.[0]?.uri;
+    if (!root) {
+      this.post({ type: 'error', message: 'Open a folder before creating an agent.' });
+      return;
+    }
+    const file = vscode.Uri.joinPath(root, '.opencode', 'agent', `${name}.md`);
+    try {
+      let exists = true;
+      try {
+        await vscode.workspace.fs.stat(file);
+      } catch {
+        exists = false;
+      }
+      if (!exists) {
+        const template = [
+          '---',
+          `description: Describe when this agent should be used. The model reads this verbatim to decide whether to delegate here, so be specific.`,
+          '# primary = you pick it in the composer; subagent = the model delegates to it; all = both',
+          'mode: subagent',
+          '# Optional: pin a model, restrict tools, set reasoning effort',
+          '# model: lmstudio/qwen/qwen3.6-27b',
+          '# variant: high',
+          '# tools:',
+          '#   bash: false',
+          '---',
+          '',
+          `You are ${name}. Replace this body with the system prompt for this agent.`,
+          '',
+        ].join('\n');
+        await vscode.workspace.fs.writeFile(file, Buffer.from(template, 'utf8'));
+      }
+      const doc = await vscode.workspace.openTextDocument(file);
+      await vscode.window.showTextDocument(doc, { preview: false });
+      this.post({
+        type: 'status',
+        text: exists
+          ? `Opened existing agent "${name}".`
+          : `Created .opencode/agent/${name}.md — restart the OpenCode server to load it.`,
+        kind: 'info',
+      });
+    } catch (err) {
+      logError('createAgent failed', err);
+      this.post({ type: 'error', message: `Could not create agent: ${humanizeError(err)}` });
+    }
+  }
+
+  /**
    * Send the server's slash commands (custom/built-in commands AND skills) to
    * the webview so they appear in the composer's slash menu. Skills carry
    * source:'skill' so the menu can badge them.
@@ -941,7 +1055,7 @@ export class ChatBridge {
     // the agent the goal; the idle→judge→continue loop sustains it from there.
     await this.handleSend(
       `Work toward this goal until it is fully met: ${obj}`,
-      true,
+      'auto', // leave depth to the model's own default, as this always has
       [],
       false,
       false,
@@ -1077,14 +1191,18 @@ export class ChatBridge {
     const client = this.client!;
     const session = await client.createSession(title);
     try {
-      let text = prompt;
-      if (/qwen/i.test(this.currentModel!)) {
-        text += '\n\n/no_think'; // qwen soft-switch: skip <think> for a fast verdict
-      }
+      // Judge verdicts want speed, not deliberation: pin reasoning off via the
+      // variant rather than the old qwen-only `/no_think` string, so it works
+      // across families and leaves the prompt itself clean. Falls back to a
+      // system nudge on models that declare no reasoning support.
+      const reasoning = this.modelReasoning(this.currentModel);
+      const level = resolveLevel('off', reasoning);
+      const nudge = fallbackPromptText(level, reasoning);
       await client.promptAsync(session.id, {
         model: { providerID: 'lmstudio', modelID: this.currentModel! },
-        system,
-        parts: [{ type: 'text', text }],
+        system: nudge ? `${system}\n\n${nudge}` : system,
+        ...(variantForLevel(level) ? { variant: variantForLevel(level) } : {}),
+        parts: [{ type: 'text', text: prompt }],
       });
       // Poll for the completed assistant reply (local models can be slow).
       const deadline = Date.now() + 120_000;
@@ -1322,8 +1440,48 @@ export class ChatBridge {
       publisher: m.publisher,
       quantization: m.quantization,
       format: m.format,
+      reasoning: m.reasoning,
     }));
     return this.lastModels;
+  }
+
+  /**
+   * Agents the server knows, filtered to the ones a user can actually select.
+   * User-defined agents come from .opencode/agent/*.md (and the global
+   * ~/.config/opencode/agent/), discovered by OpenCode at startup — so a newly
+   * added agent appears after the next server restart, not immediately.
+   */
+  private async loadAgents(): Promise<UiAgent[]> {
+    if (!this.client) {
+      return [];
+    }
+    try {
+      this.lastAgents = await this.client.listAgents();
+    } catch (err) {
+      // Never fatal: an older server or a transient failure just means the
+      // picker falls back to the built-in pair.
+      logError('could not enumerate agents', err);
+      this.lastAgents = [];
+    }
+    return pickableAgents(this.lastAgents as AgentInfo[]).map((a) => ({
+      name: a.name,
+      description: a.description,
+      mode: a.mode,
+      native: a.native,
+      modelID: a.model?.modelID ?? undefined,
+    }));
+  }
+
+  /**
+   * Declared reasoning capability for a model id, from the last enumeration.
+   * `undefined` when we've never seen the model or the endpoint couldn't report
+   * it — which the effort logic treats as "unknown", not "unsupported".
+   */
+  private modelReasoning(modelID: string | null): ReasoningCapability | null | undefined {
+    if (!modelID) {
+      return undefined;
+    }
+    return this.lastModels.find((m) => m.id === modelID)?.reasoning;
   }
 
   /**
@@ -1574,7 +1732,7 @@ export class ChatBridge {
 
   private async handleSend(
     text: string,
-    thinking: boolean,
+    effort: EffortLevel,
     images: UiImage[],
     includeActiveFile: boolean,
     includeSelection: boolean,
@@ -1611,18 +1769,22 @@ export class ChatBridge {
     // Our system text is appended, so this overrides the user-facing identity.
     let system = this.identitySystem() + this.goalSystemSuffix();
 
-    // Thinking control. Qwen-family models honor the `/no_think` soft switch
-    // (consumed by the chat template); for others fall back to a system hint.
-    let promptText = text;
-    if (!thinking) {
-      if (/qwen/i.test(this.currentModel)) {
-        promptText = `${text}\n\n/no_think`;
-      } else {
-        system += '\n\nAnswer directly and concisely. Do not produce private chain-of-thought or <think> reasoning blocks.';
-      }
+    // Reasoning effort. The real lever is the `variant` on the prompt body,
+    // which OpenCode resolves to `reasoning_effort` on the LM Studio request —
+    // engine-level, and it doesn't pollute the user's message the way the old
+    // `/no_think` suffix did. Clamp to what this model actually declares, so a
+    // level carried over from a different model can't be sent blindly.
+    const reasoning = this.modelReasoning(this.currentModel);
+    const level = resolveLevel(effort, reasoning);
+    const variant = variantForLevel(level);
+    // Only for models that declare no reasoning capability at all is there
+    // nothing to send — there, a text nudge is the one remaining lever.
+    const nudge = fallbackPromptText(level, reasoning);
+    if (nudge) {
+      system += `\n\n${nudge}`;
     }
 
-    const parts: PromptBody['parts'] = [{ type: 'text', text: promptText }];
+    const parts: PromptBody['parts'] = [{ type: 'text', text }];
     for (const img of images) {
       parts.push({ type: 'file', mime: img.mime, url: img.dataUrl, filename: img.name });
     }
@@ -1667,6 +1829,7 @@ export class ChatBridge {
       model: { providerID: 'lmstudio', modelID: this.currentModel },
       agent: this.agent,
       ...(system ? { system } : {}),
+      ...(variant ? { variant } : {}),
       parts,
     });
 

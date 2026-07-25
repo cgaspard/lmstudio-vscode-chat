@@ -1,5 +1,8 @@
 // Message protocol shared between the extension host and the webview.
+import type { EffortLevel, ReasoningCapability } from './core/effort';
 import type { MessageWithParts, OpencodeEvent, PermissionResponse } from './opencode/protocol';
+
+export type { EffortLevel, ReasoningCapability };
 
 export interface UiModel {
   id: string;
@@ -12,6 +15,12 @@ export interface UiModel {
   publisher?: string; // disambiguates same-named models (e.g. unsloth vs lmstudio-community)
   quantization?: string; // e.g. "8bit", "Q8_0"
   format?: string; // runtime format, e.g. "MLX" or "GGUF"
+  /**
+   * Declared reasoning support. `null` = model reports none (hide the effort
+   * control); `undefined` = unknown (offer every level — sending an
+   * unsupported one is a no-op). Drives the picker in src/core/effort.ts.
+   */
+  reasoning?: ReasoningCapability | null;
 }
 
 export interface UiSession {
@@ -50,6 +59,22 @@ export interface UiSkill {
   slash?: boolean;
 }
 
+/**
+ * One agent the user can select. Mirrors `GET /agent`, filtered to the pickable
+ * set (mode primary/all, non-hidden). Subagents are excluded — the model
+ * delegates to those via the task tool, the user never drives them directly.
+ */
+export interface UiAgent {
+  name: string;
+  description?: string;
+  /** 'primary' | 'subagent' | 'all'. */
+  mode?: string;
+  /** False for user-defined agents, so the picker can badge them. */
+  native?: boolean;
+  /** Set when the agent pins its own model rather than inheriting the session's. */
+  modelID?: string;
+}
+
 /** The active goal, as shown in the pinned goal bar. */
 export interface UiGoal {
   objective: string;
@@ -81,13 +106,18 @@ export type HostToWebview =
       type: 'init';
       models: UiModel[];
       currentModel: string | null;
-      agent: 'build' | 'plan';
+      /** Name of the active agent — no longer a fixed enum; see UiAgent. */
+      agent: string;
+      /** Agents the user can select (mode primary/all, non-hidden). */
+      agents: UiAgent[];
       cwd: string;
       serverReady: boolean;
       lmStudioConnected: boolean;
       /** Set when LM Studio answered 401/403 — reachable, but the request was rejected. */
       lmStudioAuthRequired?: boolean;
       minContext: number;
+      /** Fallback effort for models with no per-model choice stored yet. */
+      defaultEffort: EffortLevel;
     }
   // reason 'action' = reply to something the user did (load/eject/rescan) and
   // may clear load spinners / dismiss the picker; 'periodic' = background
@@ -117,6 +147,9 @@ export type HostToWebview =
   | { type: 'mcpStatus'; servers: UiMcpServer[] }
   // Result of a /skills request: the discovered skills (empty if none).
   | { type: 'skills'; skills: UiSkill[] }
+  // Result of an /agents request: every agent the server knows, both the ones
+  // the user can pick and the ones only the model can delegate to.
+  | { type: 'agents'; agents: UiAgent[]; delegatable: UiAgent[] }
   // Server-provided slash commands (skills + custom/built-in commands) to merge
   // into the composer's slash menu.
   | { type: 'commands'; commands: UiCommand[] }
@@ -149,7 +182,8 @@ export type WebviewToHost =
   | {
       type: 'send';
       text: string;
-      thinking: boolean;
+      /** Reasoning depth for this turn. Replaces the old `thinking` boolean. */
+      effort: EffortLevel;
       images?: UiImage[];
       includeActiveFile?: boolean;
       includeSelection?: boolean;
@@ -168,7 +202,10 @@ export type WebviewToHost =
   | { type: 'updateServer'; id: string; name: string; url: string; apiKey?: string | null }
   | { type: 'removeServer'; id: string }
   | { type: 'switchServer'; id: string }
-  | { type: 'selectAgent'; agent: 'build' | 'plan' }
+  | { type: 'selectAgent'; agent: string }
+  | { type: 'requestAgents' }
+  /** Scaffold a new agent definition on disk and open it for editing. */
+  | { type: 'createAgent'; name: string }
   | { type: 'newChat' }
   | { type: 'loadSessions' }
   | { type: 'loadSession'; sessionID: string }

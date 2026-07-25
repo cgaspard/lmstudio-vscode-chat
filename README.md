@@ -18,8 +18,17 @@ Powered by the open-source [**OpenCode**](https://opencode.ai) agent, bundled ri
 - **You stay in control** — inline permission prompts on every action: *Allow once*, *Allow always*, or *Deny*.
 - **Build or plan mode** — `build` edits your code; `plan` is strictly read-only for when you just want a strategy.
 - **Live todo list** — the agent's plan renders as a checklist that ticks off in place as it works, with a progress count.
-- **See it think** — reasoning models get collapsible *Thinking* blocks, toggleable on and off.
+- **See it think** — reasoning models get collapsible *Thinking* blocks. Alt-click the thinking pill to hide them without changing how the model works.
+- **Dial the thinking** — set reasoning effort per model from the model menu, the composer pill, or `/effort`. The levels offered are the ones the model actually reports: most local reasoning models are on/off, so you get *Auto · Off · On* rather than a low/medium/high slider that would do nothing. Models with no reasoning support hide the control entirely.
 - **Streaming everything** — responses render as markdown with syntax-highlighted code as they arrive.
+
+## Agents — specialists you define
+
+- **Bring your own agent** — drop a `.opencode/agent/<name>.md` in your workspace (YAML frontmatter + a body that becomes its system prompt) and it shows up in the agent picker. Each agent can pin its own model, restrict which tools it may use, and set its own reasoning effort.
+- **`mode` decides who reaches it** — `primary` puts it in your picker; `subagent` keeps it out of the picker and lets *the model* delegate to it through the built-in task tool when your request matches its `description`; `all` does both.
+- **Delegation saves context, it doesn't spend it** — a subagent runs in its own session with its own context window and returns only its answer, so a long search doesn't fill up the conversation you're having.
+- **`/agents`** shows both halves — what you can select, and what the model can delegate to. **`/agents new <name>`** scaffolds a definition and opens it.
+- Heads up: new agents are picked up when the OpenCode server restarts, and delegation depends on your local model reliably calling tools — smaller models may just answer directly instead.
 
 ## Goals — point it at an objective and walk away
 
@@ -103,6 +112,7 @@ any time with **Switch to Release Version**.
 | `lmstudioCode.agent` | `build` | `build` or `plan` |
 | `lmstudioCode.autoEnsureContext` | `true` | Reload model with adequate context before prompting |
 | `lmstudioCode.minContextLength` | `32768` | Context length to (re)load with |
+| `lmstudioCode.defaultThinkingEffort` | `auto` | Starting reasoning effort (`auto`/`off`/`low`/`medium`/`high`) for models you haven't set one for |
 | `lmstudioCode.gpuOffload` | `max` | GPU offload for `lms load` |
 | `lmstudioCode.healthCheckSeconds` | `30` | Health/model poll cadence while connected (5–600). Disconnected retries stay at 5s; the model list refreshes immediately while the model picker is open |
 | `lmstudioCode.mcpServers` | `{}` | MCP servers to expose to the agent (in addition to auto-discovered ones) |

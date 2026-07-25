@@ -243,10 +243,39 @@ export interface FilePartInputSource {
   text: { value: string; start: number; end: number };
 }
 
+// `GET /agent` — every agent the server knows: built-ins plus anything
+// discovered from .opencode/agent/*.md, ~/.config/opencode/agent/, or the
+// injected config. `mode` decides the audience: 'primary' (user-pickable),
+// 'subagent' (delegation-only, via the task tool), or 'all' (both).
+export interface OpencodeAgent {
+  name: string;
+  description?: string;
+  mode?: 'primary' | 'subagent' | 'all' | string;
+  /** True for OpenCode's own built-ins. */
+  native?: boolean;
+  /** Internal agents (title/summary/compaction) — never list these. */
+  hidden?: boolean;
+  model?: { providerID?: string; modelID?: string } | null;
+  tools?: Record<string, boolean>;
+  color?: string;
+  variant?: string;
+  [k: string]: unknown;
+}
+
+export type AgentsResponse = OpencodeAgent[];
+
 export interface PromptBody {
   model: ModelRef;
   agent?: string;
   system?: string;
+  /**
+   * Reasoning-effort variant name, matching a key we declared in the provider
+   * config (`off` | `low` | `medium` | `high`). Omit for the model's default.
+   * OpenCode resolves it to the variant's provider options — for LM Studio that
+   * lands on the wire as `reasoning_effort`. An unrecognized name is ignored
+   * silently rather than erroring.
+   */
+  variant?: string;
   parts: Array<
     | { type: 'text'; text: string }
     | { type: 'file'; mime: string; url: string; filename?: string; source?: FilePartInputSource }
