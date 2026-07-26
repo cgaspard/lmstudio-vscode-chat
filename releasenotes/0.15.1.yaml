@@ -1,0 +1,13 @@
+version: 0.15.1
+date: 2026-07-26
+highlights:
+  - Five reliability fixes found by comparing this codebase against its Ollama sibling, which had drifted ahead in a few places.
+added: []
+changed: []
+fixed:
+  - The webview CSP nonce was generated with Math.random(), which is not a cryptographic random source. It now uses node:crypto.
+  - Requests to the OpenCode server had no timeout, so a wedged server could hang the panel indefinitely. They now time out after 30 seconds.
+  - The event-stream reconnect retried on a fixed 1-second loop, hammering a downed server with a request every second indefinitely. It now backs off exponentially up to 30 seconds and resets on a successful connect.
+  - Server-sent events were not CRLF-normalized, so a server or proxy emitting \r\n line endings broke event parsing.
+  - The tool-card collapse state map was never cleared when starting a new chat and never pruned when a part was removed, growing unbounded across a long session.
+removed: []
