@@ -18,6 +18,10 @@ tsconfig.test.json
 *.vsix
 scripts/**
 *HANDOFF.md
+# Internal/working docs: only README.md ships. Without this, ANY root markdown
+# (design notes, parity reports, briefs) lands in the .vsix on the Marketplace.
+*.md
+!README.md
 media/sample-orig.gif
 media/lmstudio-logo.svg
 media/screenshots/**

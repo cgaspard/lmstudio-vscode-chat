@@ -1,13 +1,12 @@
+import { randomBytes } from 'node:crypto';
 import * as vscode from 'vscode';
 import { ChatBridge, BridgeDeps } from './bridge';
 
 function nonceStr(): string {
-  let text = '';
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-  for (let i = 0; i < 32; i++) {
-    text += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return text;
+  // 32 bytes → ~43 base64 chars; strip non-alphanumerics and keep 32 so the
+  // nonce is always full-length and CSP-safe. Math.random() is not a
+  // cryptographic RNG and has no place generating a CSP nonce.
+  return randomBytes(32).toString('base64').replace(/[^A-Za-z0-9]/g, '').slice(0, 32);
 }
 
 function getHtml(webview: vscode.Webview, extensionUri: vscode.Uri): string {

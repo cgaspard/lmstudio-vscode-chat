@@ -1,3 +1,4 @@
+import { nextDelay } from '../core/backoff';
 import { log, logError } from '../logger';
 import {
   AgentsResponse,
@@ -13,6 +14,9 @@ import {
   SkillsResponse,
 } from './protocol';
 
+/** Default per-request timeout so a stalled server can't hang the UI forever. */
+const REQ_TIMEOUT_MS = 30000;
+
 /**
  * Thin HTTP client for a running OpenCode server. Uses the global `fetch`
  * (available in the VS Code extension host / Node 20+) plus manual SSE parsing
@@ -27,6 +31,7 @@ export class OpencodeClient {
       method,
       headers: body !== undefined ? { 'content-type': 'application/json' } : undefined,
       body: body !== undefined ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(REQ_TIMEOUT_MS),
     });
     if (!res.ok) {
       const text = await res.text().catch(() => '');
@@ -186,12 +191,14 @@ export class OpencodeClient {
     onEvent: (event: OpencodeEvent) => void,
     signal: AbortSignal,
   ): Promise<void> {
+    let attempt = 0;
     while (!signal.aborted) {
       try {
         const res = await fetch(`${this.baseUrl}/event`, { signal });
         if (!res.ok || !res.body) {
           throw new Error(`event stream HTTP ${res.status}`);
         }
+        attempt = 0; // connected — reset backoff
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
         let buffer = '';
@@ -200,7 +207,9 @@ export class OpencodeClient {
           if (done) {
             break;
           }
-          buffer += decoder.decode(value, { stream: true });
+          // Normalize CRLF so the \n\n block delimiter and `data:` prefix match
+          // regardless of whether the server emits LF or CRLF line endings.
+          buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, '\n');
           let idx: number;
           while ((idx = buffer.indexOf('\n\n')) >= 0) {
             const block = buffer.slice(0, idx);
@@ -225,8 +234,11 @@ export class OpencodeClient {
         if (signal.aborted) {
           return;
         }
-        logError('event stream interrupted, reconnecting in 1s', err);
-        await new Promise((r) => setTimeout(r, 1000));
+        // Exponential backoff: a fixed 1s retry hammered a server that was
+        // down with one request per second, indefinitely.
+        const delay = nextDelay(++attempt, { base: 1000, max: 30000 });
+        logError(`event stream interrupted, reconnecting in ${delay}ms`, err);
+        await new Promise((r) => setTimeout(r, delay));
       }
     }
   }

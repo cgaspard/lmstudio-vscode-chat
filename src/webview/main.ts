@@ -2010,6 +2010,7 @@ function clearConversation(): void {
   roleByMessage.clear();
   permissionEls.clear();
   questionEls.clear();
+  toolCollapsed.clear();
   compaction.suppressed.clear();
   compaction.pending = false;
   lastCompactionChip = null;
@@ -2999,6 +3000,7 @@ function handleEvent(event: OpencodeEvent): void {
       const ps = partState.get(p.partID);
       ps?.el.remove();
       partState.delete(p.partID);
+      toolCollapsed.delete(p.partID);
       break;
     }
     case 'permission.asked':
