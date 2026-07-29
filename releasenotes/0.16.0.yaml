@@ -1,0 +1,35 @@
+version: 0.16.0
+date: 2026-07-26
+highlights:
+  - Stable release of everything that landed in the 0.15.x pre-release line.
+  - Reasoning effort is a real control. Pick how hard the model thinks per model - Auto, Off, or the depths it actually supports - from the model menu, the composer pill, or /effort.
+  - The levels are derived from what each model reports, not hardcoded. Most local reasoning models only support on/off, so they show on/off rather than a low/medium/high slider that would do nothing.
+  - User-defined agents. Define one as .opencode/agent/<name>.md and it appears in the agent picker, with its own system prompt, model, tool restrictions and reasoning effort.
+  - Agents marked as subagents are not in the picker at all - the model discovers them and delegates through the built-in task tool, running them in a separate context that does not consume your conversation.
+  - Tokens/sec is accurate now, and each turn reports its whole cost rather than only what was generated.
+  - Thinking blocks collapse when a turn finishes, labelled with how long the model thought.
+  - Bundled OpenCode moves to 1.18.4.
+added:
+  - Reasoning effort selector in the model menu footer, alongside the context-window presets, scoped per model.
+  - The composer thinking pill is an effort cycler showing the current level; alt-click toggles whether reasoning blocks are displayed.
+  - /effort slash command, and an lmstudioCode.defaultThinkingEffort setting for the starting level.
+  - /agents lists both halves of the roster - the agents you can select, and the ones only the model can delegate to. /agents new <name> scaffolds a definition and opens it.
+  - The agent picker is populated from the server rather than a hardcoded build/plan pair, so any agent you define shows up (badged "custom").
+  - Models that report no reasoning support hide the effort control entirely instead of showing a dead one.
+changed:
+  - Effort travels as a real request parameter instead of appending /no_think to your message, so it works across model families and leaves your prompt clean. The goal-loop judge uses it too.
+  - The generation stat under each turn reports the agent, prompt tokens in, output tokens with the thinking share, the combined total, elapsed time and tok/s. A turn can be 8k in for 2 tokens out, which the old output-only number hid completely.
+  - Each turn names the agent that ran it, and a task tool card shows which subagent it delegated to.
+  - Reasoning blocks stream open so you can watch the model think, then collapse at the end of the turn. A block you opened or closed yourself is left alone.
+  - Thinking on/off and reasoning visibility are now separate concerns; effort controls generation, alt-clicking the pill controls display.
+  - Reasoning effort is remembered per model. A level carried over from another model is clamped to what the new one supports rather than sent blindly.
+fixed:
+  - Tokens/sec counted tool-execution and step-boundary time as generation time, understating the rate by a wide margin on any turn that used tools.
+  - The context meter assumed a fixed overhead per agent mode. It is now computed per agent and grows with the number of delegatable agents, since each one's description is appended to the task tool the primary agent sees.
+  - The webview CSP nonce was generated with Math.random(), which is not a cryptographic random source. It now uses node:crypto.
+  - Requests to the OpenCode server had no timeout, so a wedged server could hang the panel indefinitely. They now time out after 30 seconds.
+  - The event-stream reconnect retried on a fixed 1-second loop, hammering a downed server indefinitely. It now backs off exponentially up to 30 seconds.
+  - Server-sent events were not CRLF-normalized, so a server or proxy emitting \r\n line endings broke event parsing.
+  - The tool-card collapse state map was never cleared on a new chat and never pruned when a part was removed, growing unbounded across a long session.
+  - Internal working documents could be packaged into the published .vsix; only README.md ships now.
+removed: []
