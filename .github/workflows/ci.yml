@@ -13,7 +13,13 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          # 22, not 20: npm test passes a glob to `node --test`, which only
+
+          # expands from Node 21 on — under 20 the suite never ran and CI was red
+
+          # on every push. 22 also matches the Node in VS Code's Electron.
+
+          node-version: '22'
           cache: 'npm'
       - run: npm ci
       - run: npm run check-types
