@@ -15,3 +15,6 @@ out-integration/
 # Skill/MCP run artifacts created when testing the sample workspace
 sample-workspace/.opencode/node_modules/
 sample-workspace/.opencode/**/node_modules/
+
+# Graphoxide code-graph output, regenerated on demand.
+/graphoxide-out/

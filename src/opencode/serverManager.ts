@@ -2,11 +2,13 @@ import { ChildProcess, spawn } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import * as vscode from 'vscode';
 import { ExtensionConfig, getConfig } from '../config';
 import { resolveBinaryPath } from '../core/binary';
 import { clampContext } from '../core/context';
 import { variantsForModel } from '../core/effort';
+import { HOST_XDG_ENV, hostXdgForChildren, snapshotHostXdg, withHostXdg } from '../core/hostenv';
 import { augmentedPath } from '../core/mcp';
 import { LMStudioClient } from '../lmstudio/client';
 import { log, logError } from '../logger';
@@ -237,6 +239,9 @@ export class OpencodeServerManager {
     } catch (err) {
       logError('could not create opencode data dir', err);
     }
+    // Snapshot the host's XDG values before ours replace them, so the bundled
+    // plugin can hand them back to the commands the agent runs.
+    const hostXdg = JSON.stringify(snapshotHostXdg(process.env));
     const env: NodeJS.ProcessEnv = {
       ...process.env,
       OPENCODE_CONFIG_CONTENT: configContent,
@@ -246,7 +251,14 @@ export class OpencodeServerManager {
       // with a minimal PATH (the #1 reason npx-based MCP servers fail to start).
       // Existing entries are kept first so a user's own toolchain still wins.
       PATH: augmentedPath(process.env.PATH, os.homedir(), path.delimiter),
+      [HOST_XDG_ENV]: hostXdg,
       // Sandbox all on-disk state to our managed dir.
+      //
+      // These are inherited by every process the agent's `bash` tool spawns,
+      // where they break XDG-respecting CLIs (`gh auth status` reports "not
+      // logged in", `helm` loses its repo config). `opencode-plugin/
+      // xdg-passthrough.js` restores the snapshot above for those children;
+      // see src/core/hostenv.ts.
       XDG_DATA_HOME: sub('data'),
       XDG_CONFIG_HOME: sub('config'),
       XDG_CACHE_HOME: sub('cache'),
@@ -303,15 +315,24 @@ export class OpencodeServerManager {
     // through OpenCode's existing tool-call + permission machinery for free.
     let mcp: ReturnType<typeof discoverMcpServers>['map'] = {};
     try {
-      mcp = discoverMcpServers().map;
+      // stdio servers are spawned by OpenCode and would otherwise inherit the
+      // pinned XDG dirs the same way shell commands do; the `shell.env` plugin
+      // does not reach them, so hand the values over per-server instead.
+      mcp = withHostXdg(
+        discoverMcpServers().map,
+        hostXdgForChildren(process.env, os.homedir(), path.join),
+      );
     } catch (err) {
       logError('could not discover MCP servers', err);
     }
 
     // Override the build/plan agent prompts so the model identifies as
     // "LM Studio Code" instead of OpenCode's built-in "You are opencode…".
+    const pluginUrl = this.xdgPluginUrl();
     const config = {
       $schema: 'https://opencode.ai/config.json',
+      // Hands the host's real XDG_* values back to the agent's shell commands.
+      ...(pluginUrl ? { plugin: [pluginUrl] } : {}),
       // Let the model ask the user clarifying questions via the built-in
       // `question` tool. "allow" surfaces the picker immediately (the picker is
       // the interaction; no redundant approval gate). The bridge relays the
@@ -364,6 +385,23 @@ export class OpencodeServerManager {
       logError('could not write api key file; passing key inline', err);
       return { apiKey };
     }
+  }
+
+  /**
+   * `file://` URL of the bundled `shell.env` plugin, or null when it is missing
+   * (corrupt install / a packaging change that dropped it). Returning null just
+   * means shell commands keep the pinned XDG values — the pre-fix behaviour —
+   * and a plugin that fails to load is likewise non-fatal: verified against
+   * OpenCode 1.18.4 that a syntactically broken plugin still leaves the server
+   * serving requests normally.
+   */
+  private xdgPluginUrl(): string | null {
+    const p = path.join(this.extensionPath, 'opencode-plugin', 'xdg-passthrough.js');
+    if (!fs.existsSync(p)) {
+      logError('xdg passthrough plugin missing; agent shell commands keep pinned XDG dirs', p);
+      return null;
+    }
+    return pathToFileURL(p).href;
   }
 
   /** Absolute path to the binary bundled inside the VSIX (if present). */
