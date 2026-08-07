@@ -21,18 +21,28 @@ export function clampContext(requested: number, modelMax?: number): number {
   return Math.max(1, Math.min(req, cap));
 }
 
-const BASE_PRESETS = [8192, 16384, 32768, 65536, 131072, 262144];
-
 /**
- * Context-window presets to offer in the picker, filtered to the model's max
- * (and always including the exact max). Sorted ascending, de-duplicated. When
- * the max is unknown we assume a generous 128K so the picker still works.
+ * The context limit to declare to OpenCode for a model, so it compacts before
+ * LM Studio overflows.
+ *
+ * The loaded window wins whenever we know it, because LM Studio — not us —
+ * decides it: `context_length` on `/api/v1/models/load` is accepted and then
+ * ignored on some builds (0.3.3x loads every model at its maximum, and so does
+ * `lms load -c`). Declaring the window we *asked* for would have OpenCode
+ * compacting against a number the server never agreed to. `configured` is only
+ * the fallback for a model that isn't loaded yet.
  */
-export function contextPresets(modelMax?: number): number[] {
-  const max = modelMax && Number.isFinite(modelMax) && modelMax > 0 ? Math.floor(modelMax) : 131072;
-  const set = new Set(BASE_PRESETS.filter((v) => v <= max));
-  set.add(max);
-  return [...set].sort((a, b) => a - b);
+export function opencodeContextLimit(model: LoadedWindow, configured: number): number {
+  const loaded = model.loadedContextLength;
+  if (loaded && Number.isFinite(loaded) && loaded > 0) {
+    return Math.floor(loaded);
+  }
+  return clampContext(configured, model.maxContextLength);
+}
+
+export interface LoadedWindow {
+  loadedContextLength?: number;
+  maxContextLength?: number;
 }
 
 /** 1024-base token formatting: 32768 -> "32K", 131072 -> "128K", 1.5M -> "1.5M". */
@@ -47,6 +57,47 @@ export function formatTokens(n: number): string {
     return Math.round(n / 1024) + 'K';
   }
   return String(Math.round(n));
+}
+
+export interface LoadedModelState {
+  /** Whether LM Studio currently holds an instance of this model. */
+  loaded: boolean;
+  /** The loaded instance's context window (absent/0 when unknown). */
+  loadedContext?: number;
+  /** The model's own maximum context window. */
+  maxContext?: number;
+}
+
+export interface ContextDecision {
+  /** 'load' = load the model at `target`; 'none' = leave LM Studio alone. */
+  action: 'load' | 'none';
+  /** The window to ask for — always clamped to the model's real maximum. */
+  target: number;
+  reason: 'not-loaded' | 'below-floor' | 'satisfied' | 'no-target';
+}
+
+/**
+ * Decide whether to (re)load a model before prompting it (`autoEnsureContext`).
+ *
+ * A floor — "at least this much" — never a setpoint. It loads an unloaded model
+ * and grows a too-small one, but never shrinks: the window a model comes up
+ * with is LM Studio's decision (its load API ignores `context_length` on some
+ * builds), and treating it as ours would mean unloading the user's model before
+ * every send to chase a number the server won't honor anyway.
+ */
+export function decideContextLoad(model: LoadedModelState, requested: number): ContextDecision {
+  const target = clampContext(requested, model.maxContext);
+  if (target <= 0) {
+    // Neither a usable request nor a known maximum — nothing to ask for.
+    return { action: 'none', target, reason: 'no-target' };
+  }
+  if (!model.loaded) {
+    return { action: 'load', target, reason: 'not-loaded' };
+  }
+  const ctx = model.loadedContext && model.loadedContext > 0 ? model.loadedContext : 0;
+  return ctx >= target
+    ? { action: 'none', target, reason: 'satisfied' }
+    : { action: 'load', target, reason: 'below-floor' };
 }
 
 export interface WindowModel {

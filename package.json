@@ -2,7 +2,7 @@
   "name": "lmstudio-code",
   "displayName": "LM Studio Code",
   "description": "Agentic coding panel for your local LM Studio models. A Claude Code / Codex\u2013style chat experience powered by the open-source OpenCode agent, running entirely against your local models.",
-  "version": "0.18.0",
+  "version": "0.20.0",
   "publisher": "cgaspard",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -138,7 +138,7 @@
         "lmstudioCode.minContextLength": {
           "type": "number",
           "default": 32768,
-          "description": "Minimum context length to (re)load models with when autoEnsureContext is enabled. OpenCode's agent system prompt + tools alone use ~11k tokens, so keep this comfortably large."
+          "description": "Context length to request when autoEnsureContext loads a model that isn't loaded yet, and the minimum to grow a smaller one to. LM Studio has the final say — some builds ignore the requested size and load every model at its maximum — so the context meter and OpenCode's limits always follow the window LM Studio reports, not this number. OpenCode's agent system prompt + tools alone use ~11k tokens, so keep this comfortably large."
         },
         "lmstudioCode.defaultThinkingEffort": {
           "type": "string",
@@ -256,7 +256,7 @@
     "@types/mocha": "^10.0.10",
     "@types/node": "^20.11.0",
     "@types/vscode": "^1.104.0",
-    "@vscode/test-electron": "^3.0.0",
+    "@vscode/test-electron": "^3.1.0",
     "@vscode/vsce": "^3.7.1",
     "esbuild": "^0.20.0",
     "glob": "^13.0.6",

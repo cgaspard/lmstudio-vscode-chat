@@ -3,6 +3,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { lmStudioRestRoot } from '../config';
+import { decideContextLoad } from '../core/context';
 import type { ReasoningCapability } from '../core/effort';
 import { ProbeStatus } from '../core/health';
 import { log, logError } from '../logger';
@@ -46,6 +47,13 @@ export interface LMStudioModel {
    * unsupported — see src/core/effort.ts.
    */
   reasoning?: ReasoningCapability | null;
+}
+
+/** Outcome of a context-window request. `context` is what LM Studio now holds. */
+export interface ContextResult {
+  reloaded: boolean;
+  context?: number;
+  note?: string;
 }
 
 /** Discovery + lifecycle helper for a local LM Studio server. */
@@ -330,27 +338,36 @@ export class LMStudioClient {
   }
 
   /**
-   * Ensure `modelId` is loaded with at least `minContext` tokens of context.
-   * Uses LM Studio's native REST API (`/api/v1/models/load|unload`); falls back
-   * to the `lms` CLI only if REST is unavailable. Never throws.
+   * Ensure `modelId` is loaded with *at least* `minContext` tokens of context,
+   * loading it if it isn't loaded at all. A floor, not a setpoint — see
+   * `decideContextLoad`. Uses LM Studio's native REST API
+   * (`/api/v1/models/load|unload`), falling back to the `lms` CLI only if REST
+   * is unavailable. Never throws.
    */
   async ensureContext(
     modelId: string,
     minContext: number,
     gpu: string,
     onProgress?: (msg: string) => void,
-  ): Promise<{ reloaded: boolean; context?: number; note?: string }> {
+  ): Promise<ContextResult> {
     try {
       const model = await this.getModel(modelId);
       if (!model) {
         return { reloaded: false, note: 'model not found in LM Studio' };
       }
-      const cap = model.maxContextLength ?? minContext;
-      const target = Math.min(minContext, cap);
       const ctx = model.loadedContextLength ?? 0;
-      if (model.state === 'loaded' && ctx >= target) {
-        return { reloaded: false, context: ctx };
+      const decision = decideContextLoad(
+        {
+          loaded: model.state === 'loaded',
+          loadedContext: ctx,
+          maxContext: model.maxContextLength,
+        },
+        minContext,
+      );
+      if (decision.action === 'none') {
+        return { reloaded: false, context: ctx || undefined };
       }
+      const target = decision.target;
       onProgress?.(`Loading ${prettyName(modelId)} with ${target.toLocaleString()} context…`);
       // Prefer the native REST API (no external CLI dependency).
       try {

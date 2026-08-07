@@ -6,7 +6,7 @@ import { pathToFileURL } from 'node:url';
 import * as vscode from 'vscode';
 import { ExtensionConfig, getConfig } from '../config';
 import { resolveBinaryPath } from '../core/binary';
-import { clampContext } from '../core/context';
+import { opencodeContextLimit } from '../core/context';
 import { variantsForModel } from '../core/effort';
 import { HOST_XDG_ENV, hostXdgForChildren, snapshotHostXdg, withHostXdg } from '../core/hostenv';
 import { augmentedPath } from '../core/mcp';
@@ -280,10 +280,10 @@ export class OpencodeServerManager {
       const list = await this.lmStudio.listModels();
       for (const m of list) {
         // OpenCode drops image attachments unless the model is declared with
-        // attachment + image modality. Align the context limit with the window
-        // we ensure-load so OpenCode compacts before LM Studio overflows — but
-        // never declare more context than the model actually supports.
-        const perModel = clampContext(ctx, m.maxContextLength);
+        // attachment + image modality. The context limit follows the window LM
+        // Studio actually loaded the model with, so OpenCode compacts against
+        // the real window rather than one we merely asked for.
+        const perModel = opencodeContextLimit(m, ctx);
         models[m.id] = {
           name: m.displayName,
           attachment: !!m.vision,

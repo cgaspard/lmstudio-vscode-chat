@@ -1,0 +1,21 @@
+version: 0.20.0
+date: 2026-08-07
+highlights:
+  - The context window is now reported, not requested. LM Studio decides the window, and the panel shows what it actually loaded.
+  - The context size buttons in the model picker are gone. They looked like they set the window, and on current LM Studio builds nothing they did could.
+  - Two separate problems were behind the confusing "I picked 64K and it says 256K" report, and only one of them was ours.
+  - Ours - picking a size only saved a setting and restarted the OpenCode server. Nothing ever asked LM Studio to change anything, because the one code path that talks to it only ever grows a window that is too small.
+  - LM Studio's - the load API accepts `context_length` and then ignores it. Verified against 0.3.3x - a model loaded with `lms load -c 4096` completed a 12,010 token prompt, and `/api/v1/models/load` echoed back the model's full 256K for a 16K request.
+  - Since the size cannot be set from here, the panel stops pretending otherwise. Set the context window in LM Studio; everything here follows it.
+  - The extension version is now visible in the panel, so you can tell at a glance which build you are running.
+added:
+  - The extension version appears left of the new chat / history / open in tab buttons, in the empty-state title, in the sidebar header, and on the editor tab.
+changed:
+  - OpenCode's context limit now follows the window LM Studio reports for the loaded model, so compaction is measured against the real window instead of a number LM Studio never agreed to.
+  - The context meter and the model pill were already reporting the loaded window; they are now the only thing reporting it, and nothing in the UI can disagree with them.
+  - `lmstudioCode.minContextLength` is now settings-only, and means what it says - the window to ask for when loading a model that is not loaded yet, and the minimum to grow a smaller one to. LM Studio still has the final say.
+fixed:
+  - Picking a context size no longer silently changes nothing. There is no longer a control that can silently change nothing.
+  - The model picker can no longer show one window as selected while the model pill reports a different one.
+removed:
+  - The context window size buttons from the model picker, and the `setContextSize` message behind them.

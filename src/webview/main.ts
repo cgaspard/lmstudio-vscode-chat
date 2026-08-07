@@ -8,7 +8,7 @@ import {
   shouldSuppressMessage,
 } from '../core/compaction';
 import { matchSlashPrefix, mergeSlashCommands, parseSlashInput } from '../core/commands';
-import { computeWindow, contextPresets, formatTokens } from '../core/context';
+import { computeWindow, formatTokens } from '../core/context';
 import {
   type AgentInfo,
   agentLabel,
@@ -242,17 +242,23 @@ let workingTimer: ReturnType<typeof setInterval> | undefined;
 
 function build(): void {
   const app = document.getElementById('app')!;
+  // Injected into <body data-version> by the host, so it is available before
+  // the first message arrives and needs no protocol field.
+  const appVersion = document.body.dataset.version ?? '';
   app.innerHTML = `
-    <div id="titlebar-actions" class="titlebar-actions">
-      <button id="ta-new" class="ta-btn" title="New chat">${icon.plus}</button>
-      <button id="ta-history" class="ta-btn" title="Session history">${icon.history}</button>
-      <button id="ta-tab" class="ta-btn" title="Open chat in editor tab">${icon.window}</button>
+    <div class="titlebar">
+      <span class="ver-chip" title="LM Studio Code extension version">${appVersion ? `v${appVersion}` : ''}</span>
+      <div id="titlebar-actions" class="titlebar-actions">
+        <button id="ta-new" class="ta-btn" title="New chat">${icon.plus}</button>
+        <button id="ta-history" class="ta-btn" title="Session history">${icon.history}</button>
+        <button id="ta-tab" class="ta-btn" title="Open chat in editor tab">${icon.window}</button>
+      </div>
     </div>
     <div id="conn-banner" class="conn-banner hidden"></div>
     <div id="messages" class="messages">
       <div id="welcome" class="welcome">
         <div class="welcome-logo">${icon.sparkLarge}</div>
-        <div class="welcome-title">LM Studio Code</div>
+        <div class="welcome-title">LM Studio Code${appVersion ? ` <span class="welcome-ver">v${appVersion}</span>` : ''}</div>
         <div class="welcome-sub">Local agentic coding, powered by OpenCode.</div>
         <div class="welcome-hint">Pick a model below and describe a task.</div>
       </div>
@@ -316,10 +322,6 @@ function build(): void {
         <button id="model-refresh" class="icon-btn" title="Rescan models">${icon.refresh}</button>
       </div>
       <div id="model-menu-list" class="model-menu-list"></div>
-      <div class="model-menu-foot">
-        <span class="ctx-foot-label">Context window</span>
-        <div id="ctx-presets" class="ctx-presets"></div>
-      </div>
       <div class="model-menu-foot" id="effort-foot">
         <span class="ctx-foot-label">Reasoning effort</span>
         <div id="effort-presets" class="ctx-presets"></div>
@@ -1651,37 +1653,7 @@ function renderModelMenu(): void {
     modelMenuList.appendChild(row);
   }
   modelMenuList.scrollTop = scrollTop;
-  renderCtxPresets();
   renderEffortPresets();
-}
-
-function renderCtxPresets(): void {
-  const el = document.getElementById('ctx-presets');
-  if (!el) {
-    return;
-  }
-  const m = state.models.find((x) => x.id === state.currentModel);
-  // Presets are filtered to the selected model's real maximum (and always
-  // include the exact max), so you can never pick more than the model supports.
-  const presets = contextPresets(m?.maxContextLength);
-  el.innerHTML = '';
-  for (const v of presets) {
-    const b = document.createElement('button');
-    b.className = 'ctx-preset' + (v === state.minContext ? ' active' : '');
-    b.textContent = formatTokens(v);
-    b.title = v.toLocaleString() + ' tokens';
-    b.addEventListener('click', (e) => {
-      e.stopPropagation();
-      if (v === state.minContext) {
-        return;
-      }
-      state.minContext = v;
-      renderCtxPresets();
-      renderMeter();
-      post({ type: 'setContextSize', tokens: v });
-    });
-    el.appendChild(b);
-  }
 }
 
 function toggleModelMenu(): void {

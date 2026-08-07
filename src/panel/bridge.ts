@@ -5,7 +5,6 @@ import { getConfig } from '../config';
 import { ServerRegistry } from '../connection';
 import { commandTakesArgs } from '../core/commands';
 import { type AgentInfo, delegatableAgents, pickableAgents, resolveAgent } from '../core/agents';
-import { clampContext } from '../core/context';
 import {
   type EffortLevel,
   type ReasoningCapability,
@@ -457,9 +456,6 @@ export class ChatBridge {
           break;
         case 'unloadModel':
           await this.handleUnloadModel(msg.modelID);
-          break;
-        case 'setContextSize':
-          await this.setContextSize(msg.tokens);
           break;
         case 'refreshModels':
           await this.refreshModelsToWebview();
@@ -1391,29 +1387,6 @@ export class ChatBridge {
       this.post({ type: 'status', text: '' });
     }
     await this.refreshModelsToWebview();
-  }
-
-  /** Persist a new context window and restart OpenCode so it takes effect. */
-  private async setContextSize(tokens: number): Promise<void> {
-    // Never persist more context than the selected model actually supports.
-    const model = this.lastModels.find((m) => m.id === this.currentModel);
-    const clamped = clampContext(tokens, model?.maxContextLength);
-    try {
-      await vscode.workspace
-        .getConfiguration('lmstudioCode')
-        .update('minContextLength', clamped, vscode.ConfigurationTarget.Global);
-    } catch (err) {
-      logError('update minContextLength', err);
-    }
-    this.post({
-      type: 'status',
-      text: `Setting context to ${Math.round(clamped / 1024)}K — restarting…`,
-    });
-    // Restart the OpenCode server so num_ctx / limit.context rebuild; keep the
-    // current session (sessions persist on disk).
-    this.teardownConnection(true);
-    await this.init();
-    this.post({ type: 'status', text: '' });
   }
 
   private async handleUnloadModel(modelID: string): Promise<void> {

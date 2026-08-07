@@ -12,6 +12,13 @@
     "moduleResolution": "node",
     "types": ["node", "mocha"]
   },
-  "include": ["test-integration", "src/shared.ts", "src/opencode/protocol.ts"],
+  "include": [
+    "test-integration",
+    "src/shared.ts",
+    "src/opencode/protocol.ts",
+    // Pure, vscode-free: the live context suite derives the same presets and
+    // labels the webview does, instead of hardcoding a second copy of them.
+    "src/core/context.ts"
+  ],
   "exclude": ["node_modules", "dist", "out", "out-test"]
 }

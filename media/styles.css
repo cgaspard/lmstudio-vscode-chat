@@ -32,11 +32,16 @@ body {
 /* Floating top-right action cluster (new chat / history / open-in-tab).
    Replaces the native VS Code view-title buttons; hovers over the chat and
    fades in when the panel is hovered or one of the buttons is focused. */
-.titlebar-actions {
+.titlebar {
   position: absolute;
   top: 6px;
   right: 8px;
   z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.titlebar-actions {
   display: flex;
   gap: 1px;
   padding: 2px;
@@ -2109,4 +2114,24 @@ body.compacting .send-btn {
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--vscode-descriptionForeground);
+}
+
+/* Extension version: sits left of the title-bar actions. Deliberately outside
+   .titlebar-actions, which fades to opacity 0 until hover — the version is
+   meant to be readable at all times. */
+.ver-chip {
+  font-size: 10.5px;
+  opacity: 0.4;
+  white-space: nowrap;
+  user-select: none;
+  pointer-events: none;
+}
+.ver-chip:empty {
+  display: none;
+}
+.welcome-ver {
+  font-size: 12px;
+  font-weight: 500;
+  opacity: 0.5;
+  vertical-align: middle;
 }

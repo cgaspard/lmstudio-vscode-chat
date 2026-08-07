@@ -191,7 +191,6 @@ export type WebviewToHost =
   | { type: 'selectModel'; modelID: string }
   | { type: 'loadModel'; modelID: string }
   | { type: 'unloadModel'; modelID: string }
-  | { type: 'setContextSize'; tokens: number }
   | { type: 'refreshModels' }
   // The model picker opened/closed — the host fast-polls the list while open.
   | { type: 'modelMenu'; open: boolean }
