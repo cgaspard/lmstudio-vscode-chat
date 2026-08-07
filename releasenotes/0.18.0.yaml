@@ -1,0 +1,20 @@
+version: 0.18.0
+date: 2026-08-05
+highlights:
+  - Stable release of what landed in the 0.17.0 pre-release. Same code, now on the stable channel.
+  - Command-line tools the agent runs can see your real environment again. Most visibly, `gh` is authenticated - it was reporting "not logged into any GitHub hosts" on machines where `gh auth status` works fine in a terminal.
+  - The cause was this extension, not OpenCode. To keep its managed OpenCode server from sharing state with your own OpenCode install, the extension pins XDG_CONFIG_HOME and friends to a private directory - and every command the agent ran inherited them.
+  - That silently broke any tool that follows the XDG spec. `gh` reads $XDG_CONFIG_HOME/gh/hosts.yml to learn which hosts exist before it consults the keychain, so with the pin in place it concluded there were none. `helm` lost its repo list and chart cache the same way.
+  - Fixed without giving up the isolation - OpenCode still keeps its own state in the private directory. Only the commands the agent spawns get your real values back.
+added:
+  - A small OpenCode plugin ships with the extension and restores the host's XDG_DATA_HOME, XDG_CONFIG_HOME, XDG_CACHE_HOME and XDG_STATE_HOME for shell commands the agent runs.
+  - stdio MCP servers get the same treatment through their per-server environment map, since the plugin hook does not reach them.
+changed:
+  - A variable that was unset on your machine is now genuinely unset for the agent's commands rather than being set to an empty string, which is not the same thing to a tool that joins the value onto a path.
+  - An MCP server's own environment still wins over these values, so deliberately pointing one at a different config directory keeps working.
+fixed:
+  - `gh` reported not being logged in, so the agent could not file issues, open pull requests, or read anything through the GitHub CLI even on a fully authenticated machine.
+  - `helm` resolved HELM_CONFIG_HOME, HELM_CACHE_HOME and HELM_DATA_HOME into the extension's private directory, so repo lists and chart caches came back empty.
+  - Any other XDG-respecting CLI the agent invoked had the same problem, including tools invoked indirectly from a script.
+  - Packaging no longer picks up local agent config or generated code-graph output when the .vsix is built on a developer machine rather than in CI.
+removed: []
