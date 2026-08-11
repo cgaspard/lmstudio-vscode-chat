@@ -1,0 +1,10 @@
+version: 0.21.0
+date: 2026-08-10
+highlights:
+  - Bundled OpenCode upgraded 1.18.4 → 1.18.16 — twelve upstream patch releases of fixes, verified end-to-end against LM Studio with zero changes to existing behavior.
+added: []
+changed:
+  - The bundled OpenCode server is now 1.18.16. Every consumed endpoint and event was diffed old-vs-new (byte-identical API surface) and the full stack was re-verified live — streaming, thinking blocks, the reasoning-effort control, /compact, slash commands, session history, and API-key handling all behave exactly as before.
+  - Upstream niceties in the new server — message history is now ordered by true chronology, repeated /compact keeps earlier tool-call history in summaries instead of dropping it, MCP connections recover better after errors and expired sessions, transient model-server errors are retried instead of failing the turn, and unknown config keys no longer risk breaking server startup.
+fixed: []
+removed: []
