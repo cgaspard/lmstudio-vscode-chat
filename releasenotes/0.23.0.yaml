@@ -1,0 +1,10 @@
+version: 0.23.0
+date: 2026-08-12
+highlights:
+  - Bundled OpenCode upgraded 1.18.16 → 1.18.17 — /compact reworked for smaller local models, and transient model-server errors now stop retrying after five attempts instead of hanging the turn forever.
+added: []
+changed:
+  - The bundled OpenCode server is now 1.18.17. /compact keeps recent turns verbatim up to a larger budget and produces clearer summaries on small models; a persistently failing model server now surfaces an error after ~5 retries instead of retrying indefinitely.
+  - Re-verified end-to-end against LM Studio 0.4.20, including gpt-oss — its reasoning stream (which LM Studio sends in a different field than other models) renders as a thinking block above the answer, the graded reasoning-effort control reaches the wire for both field styles, and /compact plus post-compaction turns behave correctly.
+fixed: []
+removed: []
