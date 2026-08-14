@@ -15,7 +15,7 @@ Powered by the open-source [**OpenCode**](https://opencode.ai) agent, bundled ri
 ## The agent
 
 - **Real tools** — reads files, writes edits, runs shell commands, searches your codebase. Every step shows up as a tool card you can expand.
-- **You stay in control** — inline permission prompts on every action: *Allow once*, *Allow always*, or *Deny*.
+- **You stay in control** — inline permission prompts with *Allow once*, *Allow always*, or *Deny*, plus a permissions picker in the composer to set how often the agent asks: *Ask: risky only* (the default — outside-the-workspace access and `.env` reads prompt), *Ask: always* (approve every tool call), or *Bypass all* (never ask — for workspaces you trust).
 - **Build or plan mode** — `build` edits your code; `plan` is strictly read-only for when you just want a strategy.
 - **Live todo list** — the agent's plan renders as a checklist that ticks off in place as it works, with a progress count.
 - **See it think** — reasoning models get collapsible *Thinking* blocks. Alt-click the thinking pill to hide them without changing how the model works.

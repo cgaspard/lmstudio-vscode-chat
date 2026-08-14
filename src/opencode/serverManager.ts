@@ -10,6 +10,7 @@ import { opencodeContextLimit } from '../core/context';
 import { variantsForModel } from '../core/effort';
 import { HOST_XDG_ENV, hostXdgForChildren, snapshotHostXdg, withHostXdg } from '../core/hostenv';
 import { augmentedPath } from '../core/mcp';
+import { opencodePermission } from '../core/permission';
 import { LMStudioClient } from '../lmstudio/client';
 import { log, logError } from '../logger';
 import { discoverMcpServers } from '../mcp/discovery';
@@ -70,7 +71,14 @@ export class OpencodeServerManager {
   }
 
   private currentIdentity(): string {
-    return JSON.stringify([this.lmStudio.getBaseUrl(), this.lmStudio.getApiKey() ?? null]);
+    // permissionMode is part of the identity for the same reason as url/key:
+    // it's baked into the config at spawn, so a running instance with a
+    // different mode is stale and must respawn on the next start().
+    return JSON.stringify([
+      this.lmStudio.getBaseUrl(),
+      this.lmStudio.getApiKey() ?? null,
+      getConfig().permissionMode,
+    ]);
   }
 
   /** Start (or return the in-flight start of) the server. Idempotent. */
@@ -333,11 +341,12 @@ export class OpencodeServerManager {
       $schema: 'https://opencode.ai/config.json',
       // Hands the host's real XDG_* values back to the agent's shell commands.
       ...(pluginUrl ? { plugin: [pluginUrl] } : {}),
-      // Let the model ask the user clarifying questions via the built-in
-      // `question` tool. "allow" surfaces the picker immediately (the picker is
-      // the interaction; no redundant approval gate). The bridge relays the
-      // `question.asked` event and replies via the /question API.
-      permission: { question: 'allow' as const },
+      // Tool-approval posture (default / strict / bypass), read fresh so a
+      // mode change applies on restart. Every mode keeps the built-in
+      // `question` tool at "allow": the picker is the interaction (the bridge
+      // relays `question.asked` and replies via the /question API), so an
+      // approval gate in front of it would be redundant.
+      permission: opencodePermission(getConfig().permissionMode),
       agent: {
         build: { prompt: BUILD_PROMPT },
         plan: { prompt: PLAN_PROMPT },

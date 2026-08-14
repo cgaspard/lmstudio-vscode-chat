@@ -1,0 +1,13 @@
+version: 0.26.0
+date: 2026-08-14
+highlights:
+  - Permission levels are now yours to set. A new permissions picker in the composer chooses how often the agent asks for approval — Ask risky only (the default), Ask always, or Bypass all for full autonomy in workspaces you trust.
+  - Stopping a response now shows one quiet "Stopped" note instead of two harsh red "Aborted" banners.
+added:
+  - Permissions picker in the composer with three modes. Ask risky only keeps today's behavior (outside-the-workspace access and .env reads prompt); Ask always requires approval for every tool call; Bypass all never asks — every tool call is auto-approved. Backed by the new permissionMode setting (workspace-scoped when a folder is open, so trusting one project with Bypass doesn't leak into others), and the picker turns amber while Bypass is on as a quiet reminder.
+changed:
+  - Error notes in the conversation are softer. Genuine errors now render as a subtle tint derived from the theme's error color instead of the theme's solid validation fill, which in many themes was a loud salmon banner.
+  - Mode changes apply from the next message (the local agent server restarts with the new ruleset baked in); a chip in the chat confirms the switch.
+fixed:
+  - Aborting a response produced two stacked red "Aborted" alerts. OpenCode reports one stop through several channels, and two of its error shapes slipped past the dedup; all abort shapes now collapse into a single muted "Stopped" chip. A stop you asked for is not an error and no longer looks like one.
+removed: []

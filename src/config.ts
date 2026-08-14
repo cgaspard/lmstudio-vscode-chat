@@ -4,6 +4,7 @@ import * as vscode from 'vscode';
 // while the implementation stays unit-testable without vscode.
 export { lmStudioRestRoot } from './core/url';
 import { ALL_LEVELS, type EffortLevel } from './core/effort';
+import { normalizePermissionMode, type PermissionMode } from './core/permission';
 
 /** Settings.json is hand-editable, so an unknown level must not reach the wire. */
 function normalizeEffort(value: unknown): EffortLevel {
@@ -26,6 +27,8 @@ export interface ExtensionConfig {
   healthCheckSeconds: number;
   /** Starting reasoning effort for models with no per-model choice stored. */
   defaultThinkingEffort: EffortLevel;
+  /** Tool-approval posture baked into the OpenCode config at spawn. */
+  permissionMode: PermissionMode;
 }
 
 export function getConfig(): ExtensionConfig {
@@ -46,6 +49,7 @@ export function getConfig(): ExtensionConfig {
     gpuOffload: (cfg.get<string>('gpuOffload') ?? 'max').trim(),
     healthCheckSeconds: clampSeconds(cfg.get<number>('healthCheckSeconds'), 30, 5, 600),
     defaultThinkingEffort: normalizeEffort(cfg.get<string>('defaultThinkingEffort')),
+    permissionMode: normalizePermissionMode(cfg.get<string>('permissionMode')),
   };
 }
 

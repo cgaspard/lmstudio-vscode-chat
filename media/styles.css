@@ -802,8 +802,11 @@ body {
 }
 
 .error-bubble {
-  border: 1px solid var(--vscode-inputValidation-errorBorder, #e35d6a);
-  background: var(--vscode-inputValidation-errorBackground, rgba(227, 93, 106, 0.12));
+  /* A soft tint derived from the theme's error hue. Deliberately NOT the
+     inputValidation colors: many themes define those as solid saturated
+     fills, which read as alarming full-width banners in the transcript. */
+  border: 1px solid color-mix(in srgb, var(--vscode-errorForeground, #e35d6a) 35%, transparent);
+  background: color-mix(in srgb, var(--vscode-errorForeground, #e35d6a) 8%, transparent);
   color: var(--vscode-foreground);
   border-radius: 8px;
   padding: 8px 12px;
@@ -1076,6 +1079,14 @@ body {
 .composer-right .picker.agent {
   flex: 0 0 auto;
   max-width: 70px;
+}
+.composer-right .picker.perm {
+  flex: 0 0 auto;
+  max-width: 110px;
+}
+/* Bypass leaves the agent unattended — keep a quiet but visible reminder on. */
+.picker.perm.bypass {
+  color: var(--vscode-editorWarning-foreground, #cca700);
 }
 .tool-pill.icon-only {
   padding: 4px;

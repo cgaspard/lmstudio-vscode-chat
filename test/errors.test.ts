@@ -44,6 +44,30 @@ test('isAbortError only matches genuine aborts', () => {
   assert.equal(isAbortError(new Error('fetch failed')), false);
 });
 
+test('isAbortError recognizes every shape an OpenCode stop arrives in', () => {
+  // message.info.error / session.error carry a named error object…
+  assert.equal(isAbortError({ name: 'MessageAbortedError', data: {} }), true);
+  // …while some paths deliver just the bare "Aborted" text.
+  assert.equal(isAbortError({ data: { message: 'Aborted' } }), true);
+  assert.equal(isAbortError('Aborted'), true);
+  // Exact match only — connectivity wording must stay a connection error.
+  assert.equal(isAbortError(new Error('read ECONNABORTED')), false);
+  assert.equal(isAbortError(new Error('connection aborted')), false);
+  assert.equal(isConnectionError(new Error('connection aborted')), true);
+});
+
+test('every abort shape humanizes to the same text so the UI dedups to one notice', () => {
+  const shapes: unknown[] = [
+    named('AbortError', 'The operation was aborted'),
+    { name: 'MessageAbortedError', data: {} },
+    { data: { message: 'Aborted' } },
+    'Aborted',
+  ];
+  for (const s of shapes) {
+    assert.equal(humanizeError(s, { subject: 'LM Studio' }), 'Stopped.');
+  }
+});
+
 test('humanizeError turns connection faults into a friendly, reassuring line', () => {
   assert.equal(
     humanizeError(new TypeError('fetch failed'), { subject: 'LM Studio' }),

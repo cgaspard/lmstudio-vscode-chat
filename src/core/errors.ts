@@ -73,10 +73,19 @@ const CONNECTION_PATTERNS: RegExp[] = [
   /\btimeout\b/i,
 ];
 
-/** True for an AbortController/AbortSignal-driven cancellation (not a failure). */
+/** True for a user/AbortSignal-driven cancellation (not a failure). */
 export function isAbortError(err: unknown): boolean {
   const name = err instanceof Error ? err.name : (err as { name?: string } | null)?.name;
-  return name === 'AbortError';
+  // 'AbortError' is the AbortController convention; 'MessageAbortedError' is
+  // how OpenCode reports a stopped turn (on the message, on session.error, and
+  // on the prompt call's rejection — the same stop surfaces via all three).
+  if (name === 'AbortError' || name === 'MessageAbortedError') {
+    return true;
+  }
+  // Some OpenCode paths deliver the abort with no usable name and a bare
+  // "Aborted" message. Exact match only: connection-ish texts like
+  // "connection aborted" / ECONNABORTED must stay classified as connectivity.
+  return /^aborted\.?$/i.test(errorText(err).trim());
 }
 
 /**

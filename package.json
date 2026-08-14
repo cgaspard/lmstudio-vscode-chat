@@ -2,7 +2,7 @@
   "name": "lmstudio-code",
   "displayName": "LM Studio Code",
   "description": "Agentic coding panel for your local LM Studio models. A Claude Code / Codex\u2013style chat experience powered by the open-source OpenCode agent, running entirely against your local models.",
-  "version": "0.24.0",
+  "version": "0.26.0",
   "publisher": "cgaspard",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -158,6 +158,21 @@
             "Maximum reasoning"
           ],
           "description": "Starting reasoning effort for models you haven't set one for. Models that report only on/off reasoning collapse low/medium/high to a single 'On'; models reporting no reasoning support hide the control entirely."
+        },
+        "lmstudioCode.permissionMode": {
+          "type": "string",
+          "enum": [
+            "default",
+            "strict",
+            "bypass"
+          ],
+          "default": "default",
+          "enumDescriptions": [
+            "OpenCode's default posture: most tools run without asking; risky actions (files outside the workspace, .env reads) still prompt.",
+            "Ask for approval before every tool call.",
+            "Never ask — every tool call is auto-approved, including shell commands and file edits. Use only in workspaces you trust."
+          ],
+          "description": "How the agent asks for tool-call approval. Also switchable from the permissions picker in the chat composer. A change restarts the local OpenCode server on its next request, which interrupts any response still streaming."
         },
         "lmstudioCode.gpuOffload": {
           "type": "string",
