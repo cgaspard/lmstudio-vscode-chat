@@ -1,0 +1,12 @@
+version: 0.24.0
+date: 2026-08-13
+highlights:
+  - /compact works again on real conversations. The request that triggers compaction was being cut off after 30 seconds, so any summarization that took longer surfaced an error — even though the compaction itself had succeeded.
+  - Server slash commands and skills were hitting the same 30-second cutoff mid-run. A command like /init that takes a minute now runs to completion without a spurious error.
+added: []
+changed:
+  - /compact no longer reports failure when only the HTTP request failed. OpenCode finishes the summarization regardless of whether the panel is still listening, so a dropped request now checks the session for a new compaction marker and reports success — with the summary — when the work actually landed.
+fixed:
+  - /compact failed with a timeout error on any conversation large or slow enough to need more than 30 seconds to summarize. Measured against a local 27B, even a two-turn session took 49 seconds, so this affected essentially every real compaction. The conversation was compacted anyway, but the panel showed an error and no summary chip.
+  - Server-provided slash commands and skills aborted after 30 seconds while still running. Measured at 47 seconds for /init on a local 20B.
+removed: []

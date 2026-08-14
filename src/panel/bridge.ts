@@ -1603,10 +1603,23 @@ export class ChatBridge {
     }
     this.post({ type: 'compacting', active: true });
     this.post({ type: 'status', text: 'Compacting conversation…' });
+    const sessionID = this.currentSessionID;
+    // Marker count going in, so a failed request can tell "the server compacted
+    // anyway" from "an older compaction is still sitting in this session".
+    const markersBefore = (await this.compactionState(sessionID)).markers;
     let summary = '';
     try {
-      await this.client.summarize(this.currentSessionID, 'lmstudio', this.currentModel);
-      summary = await this.latestSummary(this.currentSessionID);
+      await this.client.summarize(sessionID, 'lmstudio', this.currentModel);
+      summary = (await this.compactionState(sessionID)).summary;
+    } catch (err) {
+      // The request is only the trigger. OpenCode runs the summarization to
+      // completion even when our connection drops, so a thrown request does not
+      // mean a failed compaction — only a missing marker does.
+      summary = await this.awaitCompaction(sessionID, markersBefore);
+      if (!summary) {
+        throw err;
+      }
+      logError('summarize request failed, but the session compacted anyway', err);
     } finally {
       // Always release the input, even if summarize threw (onMessage's catch
       // surfaces the error). A stuck "compacting" lock would be worse.
@@ -1616,18 +1629,25 @@ export class ChatBridge {
   }
 
   /**
-   * The summary text from the most recent compaction: the assistant turn that
-   * immediately follows a `compaction`-part message. Empty string if none found.
+   * Compaction state of a session: how many `compaction` markers it holds, and
+   * the summary text of the most recent one — the assistant turn that
+   * immediately follows the last marker. The summary is empty while that turn
+   * is still streaming, so the count is what proves a compaction happened.
    */
-  private async latestSummary(sessionID: string): Promise<string> {
+  private async compactionState(
+    sessionID: string,
+  ): Promise<{ markers: number; summary: string }> {
     try {
       const messages = await this.client!.getMessages(sessionID);
       let pending = false;
+      let markers = 0;
       let summary = '';
       for (const m of messages) {
         const isMarker = (m.parts ?? []).some((part) => part.type === 'compaction');
         if (isMarker) {
+          markers++;
           pending = true;
+          summary = '';
           continue;
         }
         if (pending && m.info.role === 'assistant') {
@@ -1639,10 +1659,28 @@ export class ChatBridge {
           pending = false;
         }
       }
-      return summary;
+      return { markers, summary };
     } catch {
-      return '';
+      return { markers: 0, summary: '' };
     }
+  }
+
+  /**
+   * Wait for a compaction beyond `before` markers to land and its summary to
+   * finish streaming. Used when the summarize request itself failed: the server
+   * keeps compacting regardless, so this is how we tell a lost connection from
+   * a lost compaction. Returns '' if nothing arrives, which means a real error.
+   */
+  private async awaitCompaction(sessionID: string, before: number): Promise<string> {
+    const deadline = Date.now() + 120000;
+    while (Date.now() < deadline && !this.disposed) {
+      const { markers, summary } = await this.compactionState(sessionID);
+      if (markers > before && summary) {
+        return summary;
+      }
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+    return '';
   }
 
   /** Remember (or forget) the active session so the next launch can restore it. */

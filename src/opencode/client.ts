@@ -18,6 +18,15 @@ import {
 const REQ_TIMEOUT_MS = 30000;
 
 /**
+ * Timeout for `/summarize`, which is not a "kick it off" call: the server holds
+ * the request open for the whole summarization run, so it takes as long as one
+ * model turn over the entire conversation. Measured at 49s for a two-turn
+ * session on a local 27B — the default 30s aborted a compaction that was
+ * working. Generous by design; the compaction itself is what bounds this.
+ */
+const SUMMARIZE_TIMEOUT_MS = 900000;
+
+/**
  * Thin HTTP client for a running OpenCode server. Uses the global `fetch`
  * (available in the VS Code extension host / Node 20+) plus manual SSE parsing
  * for the event stream — the same approach validated end to end against
@@ -26,12 +35,17 @@ const REQ_TIMEOUT_MS = 30000;
 export class OpencodeClient {
   constructor(private readonly baseUrl: string) {}
 
-  private async req<T>(method: string, path: string, body?: unknown): Promise<T> {
+  private async req<T>(
+    method: string,
+    path: string,
+    body?: unknown,
+    timeoutMs: number = REQ_TIMEOUT_MS,
+  ): Promise<T> {
     const res = await fetch(`${this.baseUrl}${path}`, {
       method,
       headers: body !== undefined ? { 'content-type': 'application/json' } : undefined,
       body: body !== undefined ? JSON.stringify(body) : undefined,
-      signal: AbortSignal.timeout(REQ_TIMEOUT_MS),
+      signal: AbortSignal.timeout(timeoutMs),
     });
     if (!res.ok) {
       const text = await res.text().catch(() => '');
@@ -97,6 +111,12 @@ export class OpencodeClient {
    * server expands the command/skill template (with `arguments` substituted for
    * $ARGUMENTS) and runs it; output streams over the event channel like a normal
    * prompt. `agent`/`model` pin who runs it.
+   *
+   * Like `/summarize`, the server holds the request open for the ENTIRE run
+   * (measured: 47s for `/init` on a local 20B), so it gets the same long
+   * timeout. The default 30s aborted commands that were still working — and the
+   * output arrives over the event stream anyway, so nothing here depends on the
+   * response body.
    */
   async runCommand(
     sessionID: string,
@@ -104,7 +124,7 @@ export class OpencodeClient {
     // { providerID, modelID } object. `variant` carries reasoning effort.
     body: { command: string; arguments?: string; agent?: string; model?: string; variant?: string },
   ): Promise<void> {
-    await this.req('POST', `/session/${sessionID}/command`, body);
+    await this.req('POST', `/session/${sessionID}/command`, body, SUMMARIZE_TIMEOUT_MS);
   }
 
   /**
@@ -149,11 +169,21 @@ export class OpencodeClient {
   /**
    * Compact the conversation in place via AI summarization — the same operation
    * OpenCode's TUI runs for `/compact`. `providerID`/`modelID` are required by
-   * the server (v1 `POST /session/{id}/summarize`). Progress surfaces over the
-   * event stream as a `session.compacted` event, so this returns once accepted.
+   * the server (v1 `POST /session/{id}/summarize`).
+   *
+   * This does NOT return once accepted: the server runs the whole summarization
+   * before responding, so it needs a model-turn-sized timeout, not the default
+   * one. Aborting the request does not cancel the compaction — the server
+   * finishes it regardless (verified), which is why the bridge treats a failed
+   * call as "check the session" rather than "compaction failed".
    */
   async summarize(sessionID: string, providerID: string, modelID: string): Promise<void> {
-    await this.req('POST', `/session/${sessionID}/summarize`, { providerID, modelID });
+    await this.req(
+      'POST',
+      `/session/${sessionID}/summarize`,
+      { providerID, modelID },
+      SUMMARIZE_TIMEOUT_MS,
+    );
   }
 
   /** Fire-and-forget prompt; the response streams over the event channel. */
