@@ -1,0 +1,9 @@
+version: 0.28.2
+date: 2026-08-15
+highlights:
+  - Fixes a stall where the panel went quiet after changing permissions, the context size, or adding an agent — it stayed connected but stopped receiving anything.
+fixed:
+  - Changing a setting that restarts the local agent server left the panel bound to the old server. The restart moves it to a new port, and the event stream kept retrying the old one indefinitely, so the panel looked connected with a model loaded but never received another event — replies never appeared. It now re-subscribes to the new server as soon as it comes back.
+added: []
+changed: []
+removed: []
