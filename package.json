@@ -168,9 +168,9 @@
           ],
           "default": "default",
           "enumDescriptions": [
-            "OpenCode's default posture: most tools run without asking; risky actions (files outside the workspace, .env reads) still prompt.",
-            "Ask for approval before every tool call.",
-            "Never ask — every tool call is auto-approved, including shell commands and file edits. Use only in workspaces you trust."
+            "Auto: safe actions run on their own; risky ones (files outside the workspace, .env reads) ask first — OpenCode's default posture.",
+            "Manual: every tool call asks for approval first.",
+            "Bypass: nothing asks — every tool call is auto-approved, including shell commands and file edits. Use only in workspaces you trust."
           ],
           "description": "How the agent asks for tool-call approval. Also switchable from the permissions picker in the chat composer. A change restarts the local OpenCode server on its next request, which interrupts any response still streaming."
         },

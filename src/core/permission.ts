@@ -43,14 +43,15 @@ export function opencodePermission(mode: PermissionMode): Record<string, 'allow'
   }
 }
 
-/** Short human label for chips/pickers. */
+/** Short human label for chips/pickers. Named for who approves: the safety
+ * net (Auto), the user (Manual), or nobody (Bypass). */
 export function permissionModeLabel(mode: PermissionMode): string {
   switch (mode) {
     case 'bypass':
-      return 'Never ask (bypass)';
+      return 'Bypass';
     case 'strict':
-      return 'Ask for everything';
+      return 'Manual';
     default:
-      return 'Ask for risky actions';
+      return 'Auto';
   }
 }

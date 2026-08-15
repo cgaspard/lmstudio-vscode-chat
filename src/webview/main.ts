@@ -724,9 +724,9 @@ const PERM_MODES: Array<{
   ico: 'zap' | 'lock' | 'unlock';
   meta: string;
 }> = [
-  { value: 'default', label: 'Ask: risky only', chip: 'Ask risky', ico: 'zap', meta: 'auto-approves safe actions, asks for risky ones' },
-  { value: 'strict', label: 'Ask: always', chip: 'Ask always', ico: 'lock', meta: 'asks before every tool call' },
-  { value: 'bypass', label: 'Bypass all', chip: 'Bypass', ico: 'unlock', meta: 'runs everything without asking' },
+  { value: 'default', label: 'Auto', chip: 'Auto', ico: 'zap', meta: 'safe actions run on their own, risky ones ask you' },
+  { value: 'strict', label: 'Manual', chip: 'Manual', ico: 'lock', meta: 'every action asks you first' },
+  { value: 'bypass', label: 'Bypass', chip: 'Bypass', ico: 'unlock', meta: 'nothing asks — everything runs' },
 ];
 
 /**

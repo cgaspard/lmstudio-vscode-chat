@@ -41,7 +41,7 @@ test('no mode ever emits deny (a blanket deny would strip tools from the model)'
 });
 
 test('permissionModeLabel names every mode', () => {
-  assert.equal(permissionModeLabel('bypass'), 'Never ask (bypass)');
-  assert.equal(permissionModeLabel('strict'), 'Ask for everything');
-  assert.equal(permissionModeLabel('default'), 'Ask for risky actions');
+  assert.equal(permissionModeLabel('bypass'), 'Bypass');
+  assert.equal(permissionModeLabel('strict'), 'Manual');
+  assert.equal(permissionModeLabel('default'), 'Auto');
 });

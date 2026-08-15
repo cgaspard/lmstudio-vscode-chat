@@ -49,8 +49,8 @@ describe('permission mode + abort notice', function () {
 
   it('offers the three modes and starts on the default', async () => {
     const labels = await allText('#perm-menu-list .model-row .model-name');
-    assert.deepStrictEqual(labels, ['Ask: risky only', 'Ask: always', 'Bypass all']);
-    assert.strictEqual(await text('#perm-menu-list .model-row.active .model-name'), 'Ask: risky only');
+    assert.deepStrictEqual(labels, ['Auto', 'Manual', 'Bypass']);
+    assert.strictEqual(await text('#perm-menu-list .model-row.active .model-name'), 'Auto');
   });
 
   it('switching to bypass persists the setting, acks with a chip, and flags the picker', async () => {
@@ -61,7 +61,7 @@ describe('permission mode + abort notice', function () {
     await waitUntil(async () => (await count('.sys-chip')) > chipsBefore);
     const chips = await allText('.sys-chip');
     const chip = chips[chips.length - 1];
-    assert.ok(/Permissions: Never ask \(bypass\)/.test(chip), `unexpected chip: ${chip}`);
+    assert.ok(/Permissions: Bypass/.test(chip), `unexpected chip: ${chip}`);
 
     assert.strictEqual(effectiveMode(), 'bypass');
 
@@ -74,7 +74,7 @@ describe('permission mode + abort notice', function () {
     assert.ok(await click('#perm-menu-list .model-row[data-mode="default"]'));
     await waitUntil(async () => effectiveMode() === 'default');
     await waitFor('#behavior-btn.bypass', (n) => n === 0);
-    assert.strictEqual(await text('#behavior-btn-label'), 'Ask risky');
+    assert.strictEqual(await text('#behavior-btn-label'), 'Auto');
   });
 
   it('an abort renders exactly one muted Stopped chip, never red error bubbles', async () => {
