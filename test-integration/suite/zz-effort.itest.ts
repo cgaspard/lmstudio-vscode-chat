@@ -97,8 +97,10 @@ describe('reasoning effort', function () {
   it('a model reporting no reasoning support hides the control entirely', async () => {
     await postModels('qwen/qwen3-vl-8b');
     await waitFor('#effort-foot:not(.hidden)', (n) => n === 0);
-    // ...and the composer pill goes with it, rather than becoming a dead toggle.
-    await waitFor('#btn-think:not(.hidden)', (n) => n === 0);
+    // ...and the behavior chip drops its thinking segment, rather than
+    // showing a dead level for a model that can't reason.
+    await waitFor('#behavior-btn-label', (n) => n === 1);
+    assert.ok(!((await text('#behavior-btn-label')) ?? '').includes('·'), 'chip shows only the agent');
   });
 
   it('selecting a level marks it active', async () => {
@@ -122,19 +124,19 @@ describe('reasoning effort', function () {
     assert.strictEqual(await text('#effort-presets .ctx-preset.active'), 'High');
   });
 
-  it('the composer pill reflects the current level', async () => {
+  it('the behavior chip reflects the current level', async () => {
     await postModels('openai/gpt-oss-20b');
-    await waitFor('#btn-think:not(.hidden)', (n) => n === 1);
-    assert.strictEqual(await text('#btn-think'), 'High');
+    await waitFor('#behavior-btn-label', (n) => n === 1);
+    assert.strictEqual(await text('#behavior-btn-label'), 'build · High');
   });
 
-  it('the pill names the Auto state "Auto", not "Thinking"', async () => {
+  it('the chip names the Auto state "Auto", not "Thinking"', async () => {
     // "Thinking" sitting next to "On" read as a third on-state instead of
     // "let the model decide", which is what Auto actually means.
     await postModels('qwen/qwen3.6-27b');
     await waitFor('#effort-presets .ctx-preset', (n) => n === 3);
     assert.ok(await click('#effort-presets .ctx-preset:nth-child(1)'), 'Auto should be clickable');
-    await waitFor('#btn-think:not(.hidden)', (n) => n === 1);
-    assert.strictEqual(await text('#btn-think'), 'Auto');
+    await waitFor('#behavior-btn-label', (n) => n === 1);
+    assert.strictEqual(await text('#behavior-btn-label'), 'build · Auto');
   });
 });

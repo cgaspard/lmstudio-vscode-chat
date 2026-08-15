@@ -24,8 +24,8 @@ describe('server API keys', function () {
     await post({ type: 'init', models: [], currentModel: null, agent: 'build', cwd: '/tmp', serverReady: true, lmStudioConnected: true, minContext: 32768 });
     await postServers();
     // The menu list only renders while the menu is open.
-    assert.ok(await click('#server-btn'), 'server menu button should be clickable');
-    await waitFor('#server-menu:not(.hidden)', (n) => n === 1);
+    assert.ok(await click('#model-btn'), 'model & server menu button should be clickable');
+    await waitFor('#model-menu:not(.hidden)', (n) => n === 1);
     await postServers(); // re-render rows now that the menu is open
   });
 

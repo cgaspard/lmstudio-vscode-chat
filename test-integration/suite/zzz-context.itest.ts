@@ -145,7 +145,7 @@ describe('context window e2e (live LM Studio)', function () {
     const applied = (await listLive()).find((m) => m.key === target.key)!.context;
     assert.match(
       (await text('.ctx-label')) ?? '',
-      new RegExp(`/ ${formatTokens(applied)} context`),
+      new RegExp(`/ ${formatTokens(applied)} · `),
       'the meter denominator must be the loaded window, not a configured number',
     );
   });
