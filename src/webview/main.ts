@@ -190,6 +190,7 @@ const icon = {
   shield: `<svg viewBox="0 0 16 16" width="13" height="13"><path fill="none" stroke="currentColor" stroke-width="1.3" d="M8 1.8l5 2.1v3.6c0 3.2-2.1 5.7-5 7.1-2.9-1.4-5-3.9-5-7.1V3.9z"/></svg>`,
   check: `<svg viewBox="0 0 16 16" width="12" height="12"><path fill="none" stroke="currentColor" stroke-width="1.6" d="M2.8 8.4l3.3 3.3 7-7"/></svg>`,
   zap: `<svg viewBox="0 0 16 16" width="13" height="13"><path fill="currentColor" d="M9.5 1 3 9h3.5L6 15l6.5-8H9z"/></svg>`,
+  help: `<svg viewBox="0 0 16 16" width="14" height="14"><circle cx="8" cy="8" r="6.3" fill="none" stroke="currentColor" stroke-width="1.3"/><path fill="currentColor" d="M7.3 9.6c0-.8.2-1.3.9-1.8.6-.4.9-.7.9-1.3 0-.7-.5-1.1-1.2-1.1-.6 0-1.1.3-1.4.9l-1.1-.6c.5-1 1.4-1.5 2.6-1.5 1.4 0 2.4.8 2.4 2.1 0 .9-.4 1.4-1.1 1.9-.6.4-.8.7-.8 1.4zM8 12.2a.9.9 0 1 1 0-1.8.9.9 0 0 1 0 1.8z"/></svg>`,
   lock: `<svg viewBox="0 0 16 16" width="13" height="13"><path fill="none" stroke="currentColor" stroke-width="1.3" d="M5 7V4.8a3 3 0 0 1 6 0V7"/><rect x="3.5" y="7" width="9" height="6.5" rx="1.2" fill="currentColor"/></svg>`,
   unlock: `<svg viewBox="0 0 16 16" width="13" height="13"><path fill="none" stroke="currentColor" stroke-width="1.3" d="M11 7V4.8a3 3 0 0 0-5.9-.7"/><rect x="3.5" y="7" width="9" height="6.5" rx="1.2" fill="currentColor"/></svg>`,
   checklist: `<svg viewBox="0 0 16 16" width="13" height="13"><path fill="currentColor" d="M2 3h2v2H2zM6 3.5h8v1H6zM2 7h2v2H2zM6 7.5h8v1H6zM2 11h2v2H2zM6 11.5h8v1H6z"/></svg>`,
@@ -303,6 +304,7 @@ function build(): void {
         <div class="composer-row">
           <div class="composer-tools">
             <button id="btn-add" class="tool-pill icon-only" title="Add context — attach an image, include the open file">${icon.plus}</button>
+            <button id="btn-help" class="tool-pill icon-only" title="Slash commands — everything you can type">${icon.help}</button>
           </div>
           <div class="composer-right">
             <button id="model-btn" class="model-btn" title="Model &amp; server — switch, load / eject">
@@ -352,9 +354,7 @@ function build(): void {
         </div>
         <span class="effort-note" id="effort-note"></span>
         <button class="menu-row" id="toggle-reasoning"><span>Show reasoning</span><span class="menu-check">${icon.check}</span></button>
-        <div class="menu-sep"></div>
       </div>
-      <button class="menu-row" id="menu-goal">${icon.target}<span>Pursue a goal…</span></button>
     </div>
     <div id="add-menu" class="model-menu hidden">
       <button class="menu-row" id="menu-attach">${icon.paperclip}<span>Attach image…</span></button>
@@ -424,11 +424,8 @@ function build(): void {
   goalMetaEl = document.getElementById('goal-meta')!;
   goalPauseBtn = document.getElementById('goal-pause') as HTMLButtonElement;
 
-  // Goal bar controls + the behavior-menu Goal entry.
-  document.getElementById('menu-goal')!.addEventListener('click', () => {
-    closeBehaviorMenu();
-    prefillGoalInput(state.activeGoal?.objective ?? '');
-  });
+  // Goal bar controls. Starting a goal is /goal (listed in the slash menu and
+  // the ? help); once one runs, the goal bar carries the controls.
   document.getElementById('goal-edit')!.addEventListener('click', () => {
     prefillGoalInput(state.activeGoal?.objective ?? '');
   });
@@ -555,6 +552,11 @@ function build(): void {
   addBtn.addEventListener('click', (e) => {
     e.stopPropagation();
     toggleMenu(addMenu, addBtn, 260);
+  });
+  // ? — the same screen /help prints, one click away for people who would
+  // never think to type a slash.
+  document.getElementById('btn-help')!.addEventListener('click', () => {
+    helpCommand();
   });
   document.getElementById('menu-attach')!.addEventListener('click', () => {
     addMenu.classList.add('hidden');
@@ -1022,11 +1024,38 @@ function showSkills(skills: UiSkill[]): void {
   forceScrollToBottom();
 }
 
+/**
+ * The /help screen (also the composer's ? button): a formatted panel like the
+ * MCP status one — built-ins, server commands and skills grouped, monospace
+ * command column, long skill descriptions clamped with the full text on hover.
+ */
 function helpCommand(): void {
-  const lines = allCommands()
-    .map((c) => `${c.name} — ${c.hint}${c.server?.source === 'skill' ? ' (skill)' : ''}`)
-    .join('\n');
-  addSysChip(`Slash commands:\n${lines}`);
+  const cmds = allCommands();
+  const groups: Array<{ title: string; items: SlashCommand[] }> = [
+    { title: 'Built-in', items: cmds.filter((c) => !c.server) },
+    { title: 'From OpenCode', items: cmds.filter((c) => c.server && c.server.source !== 'skill') },
+    { title: 'Skills', items: cmds.filter((c) => c.server?.source === 'skill') },
+  ];
+  const el = document.createElement('div');
+  el.className = 'sys-chip help-panel';
+  let html = '<div class="help-head">Slash commands</div>';
+  for (const g of groups) {
+    if (!g.items.length) {
+      continue;
+    }
+    html += `<div class="help-group">${g.title}</div>`;
+    for (const c of g.items) {
+      html += `
+        <div class="help-row">
+          <code>${escapeHtml(c.name)}</code>
+          <span class="help-hint" title="${escapeHtml(c.hint)}">${escapeHtml(c.hint)}</span>
+        </div>`;
+    }
+  }
+  el.innerHTML = html;
+  messagesEl.appendChild(el);
+  toggleWelcome();
+  scrollToBottom();
 }
 
 // Render the MCP server status as an inline panel in the message stream — one
