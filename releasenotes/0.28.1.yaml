@@ -1,0 +1,11 @@
+version: 0.28.1
+date: 2026-08-15
+highlights:
+  - The context readout is back at the top of the composer, on its own line above where you type.
+changed:
+  - The context usage readout sits on the composer card's top-right line again, the way it did before the redesign. In 0.28.0 it had moved down beside the buttons and only appeared on hover; it is visible by default once more — a meter you have to hover to read is not much of a meter.
+fixed:
+  - The readout is laid out in normal flow instead of floating over the input, so it can no longer overlap the first line of a long message.
+  - The line is hidden entirely until a server is ready, instead of leaving an empty band above the input.
+added: []
+removed: []
