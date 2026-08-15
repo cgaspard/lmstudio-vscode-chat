@@ -62,25 +62,25 @@ describe('user-defined agents', function () {
     // `post` resolves when the message is dispatched, not when the webview has
     // rendered it — without this wait the init can land *after* the next
     // suite's setup and clobber its state.
-    await waitFor('#agent-menu-list .model-row', (n) => n === 3);
+    await waitFor('#agent-chips .ctx-preset', (n) => n === 3);
   });
 
   it('the picker is populated from the server, not hardcoded', async () => {
-    await waitFor('#agent-menu-list .model-row', (n) => n === 3);
-    assert.strictEqual(await text('#agent-menu-list .model-row:nth-child(1) .model-name'), 'build');
-    assert.strictEqual(await text('#agent-menu-list .model-row:nth-child(2) .model-name'), 'plan');
+    await waitFor('#agent-chips .ctx-preset', (n) => n === 3);
+    assert.strictEqual(await text('#agent-chips .ctx-preset:nth-child(1)'), 'build');
+    assert.strictEqual(await text('#agent-chips .ctx-preset:nth-child(2)'), 'plan');
     // User-defined agents are badged so they're distinguishable from built-ins.
-    assert.strictEqual(await text('#agent-menu-list .model-row:nth-child(3) .model-name'), 'reviewer (custom)');
+    assert.strictEqual(await text('#agent-chips .ctx-preset:nth-child(3)'), 'reviewer (custom)');
   });
 
   it('subagents never appear in the picker', async () => {
     // They are delegation-only; selecting one as the driver is meaningless and
     // OpenCode itself refuses it.
-    const opts = await count('#agent-menu-list .model-row');
+    const opts = await count('#agent-chips .ctx-preset');
     assert.strictEqual(opts, 3, 'only the pickable set should be listed');
     for (const name of ['dbexpert', 'explore', 'general']) {
       assert.strictEqual(
-        await count(`#agent-menu-list .model-row[data-agent="${name}"]`),
+        await count(`#agent-chips .ctx-preset[data-agent="${name}"]`),
         0,
         `${name} is a subagent and must not be selectable`,
       );
@@ -113,8 +113,8 @@ describe('user-defined agents', function () {
       minContext: 32768,
       defaultEffort: 'auto',
     });
-    await waitFor('#agent-menu-list .model-row', (n) => n === 3);
-    assert.strictEqual(await helpers.text('#agent-menu-list .model-row.active .model-name'), 'build');
+    await waitFor('#agent-chips .ctx-preset', (n) => n === 3);
+    assert.strictEqual(await helpers.text('#agent-chips .ctx-preset.active'), 'build');
   });
 
   it('falls back to the built-in pair before the server has answered', async () => {
@@ -131,6 +131,6 @@ describe('user-defined agents', function () {
       defaultEffort: 'auto',
     });
     // The control must never be empty, or the composer looks broken on startup.
-    await waitFor('#agent-menu-list .model-row', (n) => n === 2);
+    await waitFor('#agent-chips .ctx-preset', (n) => n === 2);
   });
 });

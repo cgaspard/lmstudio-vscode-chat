@@ -29,6 +29,15 @@ describe('server API keys', function () {
     await postServers(); // re-render rows now that the menu is open
   });
 
+  after(async () => {
+    // Close the combined menu so later suites' toggle clicks start from a
+    // known-closed state (menu state persists across suites in the shared
+    // webview).
+    if (await count('#model-menu:not(.hidden)')) {
+      await click('#model-btn');
+    }
+  });
+
   it('add-server form has a password-type API key field', async () => {
     assert.strictEqual(await count('#server-add-key'), 1, 'key input should exist');
     assert.strictEqual(await attr('#server-add-key', 'type'), 'password', 'key input must be masked');

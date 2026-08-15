@@ -127,7 +127,7 @@ describe('context window e2e (live LM Studio)', function () {
       await waitFor('#model-menu:not(.hidden)', (n) => n === 1, 10_000);
     }
     // The reasoning-effort control shares the .ctx-preset class and must stay.
-    await waitFor('#effort-presets .ctx-preset', (n) => n > 0, 10_000);
+    await waitFor('#effort-presets .effort-dot', (n) => n > 0, 10_000);
     assert.strictEqual(await count('#ctx-presets'), 0, 'the context-size picker should be gone');
     assert.strictEqual(await count('#ctx-note'), 0, 'and with it the mismatch note');
     assert.strictEqual(await count('#ctx-presets .ctx-preset'), 0);

@@ -65,14 +65,16 @@ describe('permission mode + abort notice', function () {
 
     assert.strictEqual(effectiveMode(), 'bypass');
 
-    // The shield by send keeps a visible reminder that bypass is on.
-    await waitFor('#perm-shield.bypass:not(.hidden)', (n) => n === 1);
+    // The behavior chip itself carries the reminder that bypass is on.
+    await waitFor('#behavior-btn.bypass', (n) => n === 1);
+    assert.strictEqual(await text('#behavior-btn-label'), 'Bypass');
   });
 
   it('switching back to default clears the bypass flag and persists', async () => {
     assert.ok(await click('#perm-menu-list .model-row[data-mode="default"]'));
     await waitUntil(async () => effectiveMode() === 'default');
-    await waitFor('#perm-shield:not(.hidden)', (n) => n === 0); // default mode: no shield at all
+    await waitFor('#behavior-btn.bypass', (n) => n === 0);
+    assert.strictEqual(await text('#behavior-btn-label'), 'Ask risky');
   });
 
   it('an abort renders exactly one muted Stopped chip, never red error bubbles', async () => {

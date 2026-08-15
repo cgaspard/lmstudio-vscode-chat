@@ -2241,3 +2241,103 @@ body.compacting .send-btn {
 .menu-row.hidden {
   display: none;
 }
+
+/* ---- Behavior menu, Claude-style compact layout --------------------------- */
+/* One-line section: label on the left, chips or the effort slider right. */
+.menu-inline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+}
+.menu-inline-label {
+  font-size: 12px;
+  color: var(--vscode-foreground);
+  white-space: nowrap;
+}
+.menu-inline .ctx-presets {
+  flex-wrap: nowrap;
+  overflow: hidden;
+}
+/* Permission rows carry a leading mode icon, like Claude Code's mode list. */
+.perm-row .perm-ico {
+  display: inline-flex;
+  color: var(--vscode-descriptionForeground);
+  flex: none;
+}
+.perm-row.active .perm-ico {
+  color: var(--vscode-foreground);
+}
+.perm-row.warnrow .perm-ico {
+  color: var(--vscode-editorWarning-foreground, #d7a23b);
+}
+/* Discrete thinking slider: a track of dot-buttons, current one enlarged. */
+.effort-dots {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  flex: none;
+}
+.effort-dot {
+  position: relative;
+  width: 26px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+/* the connecting track */
+.effort-dot::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
+}
+.effort-dot:first-child::before {
+  left: 50%;
+}
+.effort-dot:last-child::before {
+  right: 50%;
+}
+/* the dot itself */
+.effort-dot::after {
+  content: '';
+  position: relative;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--vscode-descriptionForeground);
+  transition: width 0.12s ease, height 0.12s ease, background 0.12s ease;
+}
+.effort-dot:hover::after {
+  background: var(--vscode-foreground);
+}
+.effort-dot.active::after {
+  width: 13px;
+  height: 13px;
+  background: var(--vscode-foreground);
+  box-shadow: 0 0 0 1px var(--vscode-panel-border, rgba(128, 128, 128, 0.4));
+}
+.effort-dot:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder, var(--accent));
+  outline-offset: -1px;
+  border-radius: 6px;
+}
+/* Behavior chip: permission-forward — icon + short mode label. */
+.behavior-btn .behavior-ico {
+  display: inline-flex;
+  flex: none;
+}
+.behavior-btn.bypass {
+  color: var(--vscode-editorWarning-foreground, #d7a23b);
+}
+.behavior-btn.bypass:hover {
+  color: var(--vscode-editorWarning-foreground, #d7a23b);
+}
