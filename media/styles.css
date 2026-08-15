@@ -240,7 +240,7 @@ body {
 .parts {
   display: flex;
   flex-direction: column;
-  gap: 11px;
+  gap: 13px;
   overflow-wrap: anywhere;
   line-height: 1.55;
 }
@@ -2407,7 +2407,7 @@ body.compacting .send-btn {
   align-items: center;
   gap: 7px;
   width: 100%;
-  padding: 2px 6px;
+  padding: 4px 6px;
   margin: 0 -6px;
   background: transparent;
   border: none;
@@ -2568,4 +2568,13 @@ body.compacting .send-btn {
 }
 .tool-line:hover .tool-time {
   opacity: 1;
+}
+
+/* Tool rows sit in their own rhythm: a touch more air than prose parts, so a
+   run of calls reads as a list rather than a block. */
+.part-tool + .part-tool {
+  margin-top: 3px;
+}
+.tool-detail {
+  margin-top: 2px;
 }

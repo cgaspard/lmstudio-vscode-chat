@@ -2183,6 +2183,9 @@ function toggleWelcome(): void {
 // Turn timestamps — every finished turn is stamped, long pauses get a divider.
 // ---------------------------------------------------------------------------
 let lastMsgStamp = 0; // epoch ms of the most recent message, for gap dividers
+/** True while replaying a stored session: parts render in their finished state
+ * (reasoning collapsed and labelled) rather than their streaming state. */
+let renderingHistory = false;
 /** Set by renderConversation so loaded history stamps with real times. */
 let msgTimeHint = 0;
 const GAP_DIVIDER_MS = 15 * 60 * 1000;
@@ -2287,10 +2290,14 @@ function renderTextLike(ps: { el: HTMLElement; buffer: string; type: string }): 
     if (!ps.el.querySelector('.reasoning-body')) {
       // Streams open so you can watch it think, then collapses at turn end
       // (see collapseReasoning) — on a reasoning-heavy turn the thinking can be
-      // ~90% of the output and would otherwise bury the actual answer.
+      // ~90% of the output and would otherwise bury the actual answer. A block
+      // restored from history was never watched, so it opens collapsed.
+      const openAttr = renderingHistory ? '' : ' open';
       ps.el.innerHTML =
-        '<details class="reasoning" open><summary><span class="chev"></span><span class="reasoning-label">Thinking…</span></summary><div class="reasoning-body"></div></details>';
-      ps.el.dataset.startedAt = String(Date.now());
+        `<details class="reasoning"${openAttr}><summary><span class="chev"></span><span class="reasoning-label">Thinking…</span></summary><div class="reasoning-body"></div></details>`;
+      if (!ps.el.dataset.startedAt) {
+        ps.el.dataset.startedAt = String(Date.now());
+      }
       // A block the user opened or closed by hand is theirs — auto-collapse must
       // not override it. Listen for the click rather than `toggle`: `toggle`
       // also fires when the element is inserted already-open, which would mark
@@ -2300,9 +2307,23 @@ function renderTextLike(ps: { el: HTMLElement; buffer: string; type: string }): 
         ps.el.dataset.userToggled = '1';
       });
     }
-    ps.el.dataset.endedAt = String(Date.now());
+    if (!renderingHistory) {
+      ps.el.dataset.endedAt = String(Date.now());
+    }
     ps.el.dataset.chars = String(ps.buffer.length);
     (ps.el.querySelector('.reasoning-body') as HTMLElement).innerHTML = mdToHtml(ps.buffer);
+    if (renderingHistory) {
+      // No live rate data for history — label from the part's own clock.
+      const label = ps.el.querySelector('.reasoning-label') as HTMLElement | null;
+      const started = Number(ps.el.dataset.startedAt ?? 0);
+      const ended = Number(ps.el.dataset.endedAt ?? 0);
+      if (label) {
+        label.textContent =
+          started && ended >= started
+            ? formatThinkingLabel(ended - started, Math.round(ps.buffer.length / 4), false)
+            : 'Thinking';
+      }
+    }
   } else {
     // Fallback: a model that printed the AskUserQuestion JSON as text instead
     // of calling the `question` tool. Once the blob parses, render the picker
@@ -2406,6 +2427,15 @@ function upsertPart(part: Part): void {
     case 'text':
     case 'reasoning': {
       ps.buffer = (part as any).text ?? ps.buffer;
+      // Prefer the part's own clock when it has one — a reloaded block must
+      // report how long the model actually thought, not how long ago we drew it.
+      const t = (part as any).time;
+      if (t?.start) {
+        ps.el.dataset.startedAt = String(t.start);
+      }
+      if (t?.end) {
+        ps.el.dataset.endedAt = String(t.end);
+      }
       renderTextLike(ps);
       break;
     }
@@ -3028,9 +3058,16 @@ function collapseReasoning(): void {
   if (!last) {
     return;
   }
-  const blocks = Array.from(last.querySelectorAll('.part-reasoning')) as HTMLElement[];
+  // An agentic turn spans several assistant messages; collapsing only the last
+  // one left every earlier block open. Sweep the whole conversation — blocks
+  // already collapsed or opened by hand are skipped below.
+  const blocks = Array.from(messagesEl.querySelectorAll('.part-reasoning')) as HTMLElement[];
   const exactReasoning = turnRate.tokens?.reasoning ?? 0;
-  const useExact = blocks.length === 1 && exactReasoning > 0;
+  // Exact counts belong to the finished turn only; with several blocks the
+  // message total can't be attributed to any one of them.
+  const lastBlocks = Array.from(last.querySelectorAll('.part-reasoning'));
+  const useExactFor = (wrap: HTMLElement) =>
+    lastBlocks.length === 1 && lastBlocks[0] === wrap && exactReasoning > 0;
   for (const wrap of blocks) {
     const details = wrap.querySelector('details.reasoning') as HTMLDetailsElement | null;
     const label = wrap.querySelector('.reasoning-label') as HTMLElement | null;
@@ -3040,6 +3077,7 @@ function collapseReasoning(): void {
     const started = Number(wrap.dataset.startedAt ?? 0);
     const ended = Number(wrap.dataset.endedAt ?? 0);
     const chars = Number(wrap.dataset.chars ?? 0);
+    const useExact = useExactFor(wrap);
     const tokens = useExact ? exactReasoning : Math.round(chars / 4);
     if (label && started && ended >= started) {
       label.textContent = formatThinkingLabel(ended - started, tokens, useExact);
@@ -3230,6 +3268,15 @@ function relativeTime(ms: number): string {
 // ---------------------------------------------------------------------------
 function renderConversation(messages: MessageWithParts[]): void {
   clearConversation();
+  renderingHistory = true;
+  try {
+    renderConversationInner(messages);
+  } finally {
+    renderingHistory = false;
+  }
+}
+
+function renderConversationInner(messages: MessageWithParts[]): void {
   let lastUsed = 0;
   for (const m of messages) {
     roleByMessage.set(m.info.id, m.info.role);
@@ -3262,9 +3309,12 @@ function renderConversation(messages: MessageWithParts[]): void {
       upsertPart(part);
     }
     // Loaded turns have no live rate data, but they do have completion times —
-    // stamp them so history reads on a timeline.
+    // stamp them so history reads on a timeline. Tool rows carry their own
+    // times, so only a turn WITHOUT them needs a message-level stamp; adding
+    // one anyway printed the same time twice at the end of the turn.
     const completed = Number(times.completed) || 0;
-    if (m.info.role === 'assistant' && completed > 0) {
+    const hasToolRow = m.parts.some((part) => part.type === 'tool');
+    if (m.info.role === 'assistant' && completed > 0 && !hasToolRow) {
       const entry = messageEls.get(m.info.id);
       if (entry && !entry.el.querySelector('.gen-stat')) {
         const stamp = document.createElement('div');
