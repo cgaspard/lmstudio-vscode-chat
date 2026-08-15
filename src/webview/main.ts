@@ -295,7 +295,6 @@ function build(): void {
       </div>
       <div class="composer-box">
         <div id="ctx-meter" class="ctx-edge" title="Context window usage"><div class="ctx-fill"></div></div>
-        <span class="ctx-label" id="ctx-tip"></span>
         <div id="slash-menu" class="slash-menu hidden"></div>
         <div id="attachments" class="attachments hidden">
           <div id="thumbs" class="thumbs"></div>
@@ -305,6 +304,7 @@ function build(): void {
           <div class="composer-tools">
             <button id="btn-add" class="tool-pill icon-only" title="Add context — attach an image, include the open file">${icon.plus}</button>
             <button id="btn-help" class="tool-pill icon-only" title="Slash commands — everything you can type">${icon.help}</button>
+            <span class="ctx-label" id="ctx-tip"></span>
           </div>
           <div class="composer-right">
             <button id="model-btn" class="model-btn" title="Model &amp; server — switch, load / eject">
@@ -351,8 +351,8 @@ function build(): void {
       </div>
       <div class="menu-sep"></div>
       <div id="perm-menu-list" class="model-menu-list"></div>
-      <div class="menu-sep"></div>
       <div id="effort-foot">
+        <div class="menu-sep"></div>
         <div class="menu-inline">
           <span class="menu-inline-label" id="effort-label">Thinking</span>
           <div id="effort-presets" class="effort-dots"></div>
@@ -1509,7 +1509,7 @@ function renderActiveFile(): void {
     !!(state.activeFile && state.includeActiveFile) ||
     !!state.activeSelection ||
     state.pendingImages.length > 0;
-  addBtn.classList.toggle('active', hasContext);
+  addBtn.classList.toggle('has-context', hasContext);
 }
 
 // The pinned goal bar (Codex-style): "🎯 Pursuing goal <objective> • round n/N
@@ -2108,6 +2108,7 @@ function renderMeter(): void {
   // Ambient 2px edge on the composer box: quiet below 70%, labeled + warning
   // colored above. The full detail lives in the tooltip and the hover label.
   ctxMeterEl.style.display = state.serverReady ? 'block' : 'none';
+  ctxLabelEl.style.display = state.serverReady ? '' : 'none';
   const box = document.querySelector('.composer-box');
   const win = currentWindow();
   const estimated = state.realTokens <= 0;
@@ -2163,7 +2164,7 @@ function clearConversation(): void {
   todoCollapsed.clear();
   hideWorking();
   messagesEl
-    .querySelectorAll('.msg, .perm-card, .question-card, .sys-chip, .error-bubble')
+    .querySelectorAll('.msg, .perm-card, .question-card, .sys-chip, .error-bubble, .time-divider')
     .forEach((n) => n.remove());
   state.realTokens = 0;
   state.compacted = false;
@@ -2543,7 +2544,7 @@ function renderTool(el: HTMLElement, part: { tool: string; state: any }, partId:
     : `<span class="tool-time">${stampSpan(partTime)}</span>`;
 
   el.innerHTML = `
-    <button class="tool-line status-${status}${collapsed ? ' collapsed' : ''}${expandable ? '' : ' inert'}" type="button">
+    <button class="tool-line status-${escapeHtml(String(status))}${collapsed ? ' collapsed' : ''}${expandable ? '' : ' inert'}" type="button">
       <span class="tool-chev">${expandable ? icon.caret : ''}</span>
       <span class="tool-name">${escapeHtml(part.tool)}</span>
       <span class="tool-title">${escapeHtml(title)}</span>
@@ -2599,6 +2600,12 @@ function buildEditDiff(
     return null;
   }
   const input = st.input ?? {};
+  // A failed edit wrote nothing. OpenCode keeps the attempted input on the
+  // errored part, so rendering it would show a diff of changes that never
+  // landed, with a confident +N -M chip to match.
+  if (st.status === 'error') {
+    return null;
+  }
   const metaDiff: string | undefined = st.metadata?.diff;
   const MAX_LINES = 400;
   const el = document.createElement('pre');
@@ -2612,15 +2619,16 @@ function buildEditDiff(
     el.appendChild(span);
   };
   if (metaDiff) {
-    const lines = String(metaDiff).split('\n');
+    const all = String(metaDiff).split('\n');
+    // Drop the patch preamble (jsdiff emits "Index: <path>", a === rule, then
+    // ---/+++). Matching on content instead would eat body lines: a removed
+    // line whose text starts with "--" renders as "---…" and is not a header.
+    const firstHunk = all.findIndex((l) => l.startsWith('@@'));
+    const lines = firstHunk >= 0 ? all.slice(firstHunk) : all;
     for (const [i, lineText] of lines.entries()) {
       if (i >= MAX_LINES) {
         append(`… ${lines.length - MAX_LINES} more lines`, 'dl-ctx dim');
         break;
-      }
-      // File headers (---/+++) are noise here — the row already names the file.
-      if (lineText.startsWith('+++') || lineText.startsWith('---')) {
-        continue;
       }
       if (lineText.startsWith('+')) {
         added++;
@@ -2646,13 +2654,33 @@ function buildEditDiff(
   if (!oldStr && !newStr) {
     return null;
   }
-  for (const lineText of oldStr ? oldStr.split('\n').slice(0, MAX_LINES / 2) : []) {
-    removed++;
+  // A file that ends in a newline splits to a trailing empty element; rendering
+  // it adds a phantom blank line and inflates the count by one.
+  const split = (text: string): string[] => {
+    const parts = text.split('\n');
+    if (parts.length > 1 && parts[parts.length - 1] === '') {
+      parts.pop();
+    }
+    return parts;
+  };
+  const oldLines = oldStr ? split(oldStr) : [];
+  const newLines = newStr ? split(newStr) : [];
+  // Count the whole change, then render at most a screenful of it — a chip
+  // reporting the truncated total would understate the edit.
+  removed = oldLines.length;
+  added = newLines.length;
+  const half = MAX_LINES / 2;
+  for (const lineText of oldLines.slice(0, half)) {
     append('- ' + lineText + '\n', 'dl-del');
   }
-  for (const lineText of newStr ? newStr.split('\n').slice(0, MAX_LINES / 2) : []) {
-    added++;
+  if (oldLines.length > half) {
+    append(`… ${oldLines.length - half} more removed lines\n`, 'dl-ctx dim');
+  }
+  for (const lineText of newLines.slice(0, half)) {
     append('+ ' + lineText + '\n', 'dl-add');
+  }
+  if (newLines.length > half) {
+    append(`… ${newLines.length - half} more added lines\n`, 'dl-ctx dim');
   }
   return { el, added, removed };
 }
@@ -2996,9 +3024,12 @@ function renderActivity(): void {
   activityEl.classList.toggle('show', showing);
   activityEl.classList.toggle('warn', hasStatus && activityKind === 'warn');
   activityEl.classList.toggle('error', hasStatus && activityKind === 'error');
-  activitySpinner.classList.toggle('hidden', !workingActive || hasStatus);
+  // A notice takes the label, but a running turn keeps its spinner and its
+  // elapsed/tok-s readout — otherwise a goal-loop notice makes a live turn look
+  // stalled for as long as the notice is up.
+  activitySpinner.classList.toggle('hidden', !workingActive);
   activityLabelEl.textContent = hasStatus ? activityStatus : workingActive ? workingLabel : '';
-  if (hasStatus || !workingActive) {
+  if (!workingActive) {
     activityExtraEl.textContent = '';
   }
 }
@@ -3011,9 +3042,6 @@ function showWorking(label = 'Working…'): void {
     clearInterval(workingTimer);
   }
   workingTimer = setInterval(() => {
-    if (activityStatus) {
-      return; // a notice owns the line right now
-    }
     const s = Math.floor((Date.now() - workingStart) / 1000);
     const rate = currentGenRate();
     const parts = [];
@@ -3105,6 +3133,9 @@ function appendGenStat(): void {
   const el = document.createElement('div');
   el.className = 'gen-stat';
   el.innerHTML = `${escapeHtml(formatRate(rate))} · ${stampSpan(Date.now())}`;
+  // A turn that ran for longer than the gap threshold must not make the NEXT
+  // message look like a fresh session — the clock advances with every turn.
+  lastMsgStamp = Date.now();
   // The trimmed line keeps four fields; agent, grand total and the thinking
   // share move here so the detail is one hover away rather than always-on.
   el.title =
@@ -3313,7 +3344,12 @@ function renderConversationInner(messages: MessageWithParts[]): void {
     // times, so only a turn WITHOUT them needs a message-level stamp; adding
     // one anyway printed the same time twice at the end of the turn.
     const completed = Number(times.completed) || 0;
-    const hasToolRow = m.parts.some((part) => part.type === 'tool');
+    const hasToolRow = m.parts.some(
+      (part) => part.type === 'tool' && (part as { tool?: string }).tool !== 'todowrite',
+    );
+    if (m.info.role === 'assistant' && completed > 0) {
+      lastMsgStamp = Math.max(lastMsgStamp, completed);
+    }
     if (m.info.role === 'assistant' && completed > 0 && !hasToolRow) {
       const entry = messageEls.get(m.info.id);
       if (entry && !entry.el.querySelector('.gen-stat')) {
@@ -3322,7 +3358,6 @@ function renderConversationInner(messages: MessageWithParts[]): void {
         stamp.innerHTML = stampSpan(completed);
         entry.el.appendChild(stamp);
       }
-      lastMsgStamp = Math.max(lastMsgStamp, completed);
     }
     if (m.info.role === 'assistant' && (m.info as any).tokens) {
       const u = tokensUsed((m.info as any).tokens);

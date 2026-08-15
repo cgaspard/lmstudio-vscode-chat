@@ -446,16 +446,6 @@ body {
 .tool-card.collapsed .tool-body {
   display: none;
 }
-.status-completed .tool-status {
-  color: var(--vscode-testing-iconPassed, #4ec07a);
-}
-.status-error .tool-status {
-  color: var(--vscode-testing-iconFailed, #e35d6a);
-}
-.status-running .tool-status,
-.status-pending .tool-status {
-  color: var(--vscode-descriptionForeground);
-}
 .tool-file {
   display: flex;
   align-items: center;
@@ -898,10 +888,14 @@ body {
 .ctx-edge.crit .ctx-fill {
   background: var(--vscode-errorForeground, #e35d6a);
 }
+/* Sits in the composer row beside the buttons — it used to be absolutely
+   positioned over the textarea, where it covered the tail of the first line. */
 .ctx-label {
-  position: absolute;
-  top: 6px;
-  right: 12px;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 10.5px;
   color: var(--vscode-descriptionForeground);
   font-variant-numeric: tabular-nums;
@@ -1039,9 +1033,17 @@ body {
   flex-wrap: nowrap;
   overflow: hidden;
 }
-.composer-tools > *,
+.composer-tools > * {
+  flex-shrink: 0;
+}
+/* The chips give way, never the actions. Send/Stop must stay reachable at any
+   panel width — there is no overflow menu to fall back on. */
 .composer-right > * {
   flex-shrink: 0;
+}
+.composer-right .model-btn {
+  flex-shrink: 1;
+  min-width: 0;
 }
 .composer-right {
   display: flex;
@@ -1060,7 +1062,7 @@ body {
 #btn-add {
   position: relative;
 }
-#btn-add.active::after {
+#btn-add.has-context::after {
   content: '';
   position: absolute;
   top: 1px;
@@ -1069,14 +1071,6 @@ body {
   height: 5px;
   border-radius: 50%;
   background: var(--vscode-foreground);
-}
-/* Bypass leaves the agent unattended — the shield is the always-visible
-   reminder, pinned next to send whenever the mode isn't the default. */
-.perm-shield {
-  color: var(--vscode-descriptionForeground);
-}
-.perm-shield.bypass {
-  color: var(--vscode-editorWarning-foreground, #d7a23b);
 }
 
 /* model + behavior chips + popover menus */
@@ -1094,15 +1088,21 @@ body {
   font-size: 11.5px;
   cursor: pointer;
 }
-/* The two chips ellipsize under pressure instead of overflowing the row; the
-   model chip gives way first (its name is recognizable truncated). */
+/* Both chips ellipsize under pressure; the model chip gives way first (its
+   name is recognizable truncated), the behavior chip keeps its short mode
+   word, and send is never in the shrink path. */
 .composer-right .model-btn {
-  flex-shrink: 1;
-  min-width: 56px;
+  flex-shrink: 4;
+  min-width: 34px;
 }
 .composer-right .behavior-btn {
-  flex-shrink: 0;
+  flex-shrink: 1;
+  min-width: 34px;
   max-width: 150px;
+}
+.composer-right .send-btn,
+.composer-right .tool-pill {
+  flex: 0 0 auto;
 }
 .model-btn:hover {
   background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.12));
@@ -1624,41 +1624,6 @@ body {
 
 /* Quiet inline active-file reference in the tool row (icon + name, no pill box),
    plus a thin separator before it — matching Claude's "| 📄 package.json". */
-.tool-sep {
-  width: 1px;
-  align-self: stretch;
-  margin: 2px 2px;
-  background: var(--vscode-panel-border, rgba(128, 128, 128, 0.3));
-}
-.ctxref {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  max-width: 160px;
-  background: transparent;
-  border: none;
-  color: var(--vscode-descriptionForeground);
-  padding: 3px 4px;
-  border-radius: 6px;
-  font-size: 11.5px;
-  cursor: pointer;
-}
-.ctxref:hover {
-  background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.12));
-  color: var(--vscode-foreground);
-}
-.ctxref.hidden {
-  display: none;
-}
-.ctxref span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.ctxref:not(.active) {
-  opacity: 0.55;
-  text-decoration: line-through;
-}
 
 /* images inside messages */
 .msg-img {
@@ -2011,7 +1976,7 @@ body.hide-reasoning .part-reasoning {
 }
 .mcp-dot.ok { background: var(--vscode-foreground); }
 .mcp-dot.err { background: var(--vscode-errorForeground, #e35d6a); }
-.mcp-dot.off { background: var(--vscode-descriptionForeground); }
+.mcp-dot.off { background: var(--vscode-descriptionForeground); opacity: 0.45; }
 .mcp-dot.pending { background: var(--vscode-descriptionForeground); }
 .mcp-row-body { min-width: 0; }
 .mcp-row-top {
@@ -2196,6 +2161,13 @@ body.compacting .send-btn {
 .menu-check {
   margin-left: auto;
   color: var(--vscode-foreground);
+  /* on a selected row the ground is the selection color, not the editor bg */
+}
+.model-row.active .menu-check,
+.model-row.active .perm-ico,
+.model-row.active .model-name,
+.model-row.active .model-meta {
+  color: var(--vscode-list-activeSelectionForeground, var(--vscode-foreground));
   display: inline-flex;
   flex: none;
 }
@@ -2230,7 +2202,6 @@ body.compacting .send-btn {
 }
 /* The behavior menu stacks three sections; cap section lists so the whole menu
    fits a short panel and scrolls internally instead of overflowing it. */
-#agent-menu-list,
 #perm-menu-list {
   max-height: 180px;
   overflow-y: auto;
@@ -2266,8 +2237,8 @@ body.compacting .send-btn {
   white-space: nowrap;
 }
 .menu-inline .ctx-presets {
-  flex-wrap: nowrap;
-  overflow: hidden;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 /* Permission rows carry a leading mode icon, like Claude Code's mode list. */
 .perm-row .perm-ico {
@@ -2406,7 +2377,6 @@ body.compacting .send-btn {
   display: flex;
   align-items: center;
   gap: 7px;
-  width: 100%;
   padding: 4px 6px;
   margin: 0 -6px;
   background: transparent;
@@ -2486,14 +2456,17 @@ body.compacting .send-btn {
   flex: 0 0 auto;
   color: var(--vscode-descriptionForeground);
 }
-.tool-line.status-error .tool-status {
-  color: var(--vscode-errorForeground, #e35d6a);
-}
-.tool-line.collapsed + .tool-detail {
+.tool-line.tool-line.collapsed + .tool-detail {
   display: none;
 }
 .tool-detail {
   padding: 4px 0 2px 17px;
+}
+/* These carried a divider that belonged INSIDE the old bordered card; with the
+   card gone they read as orphan hairlines. */
+.tool-detail .tool-file,
+.tool-detail .tool-output {
+  border-top: none;
 }
 
 /* Edit diffs — collapsed by default, opened from the line above. */
@@ -2511,11 +2484,13 @@ body.compacting .send-btn {
 }
 .tool-diff .dl-add {
   display: block;
+  min-width: max-content;
   background: var(--vscode-diffEditor-insertedLineBackground, rgba(90, 160, 110, 0.16));
   color: var(--vscode-foreground);
 }
 .tool-diff .dl-del {
   display: block;
+  min-width: max-content;
   background: var(--vscode-diffEditor-removedLineBackground, rgba(200, 90, 100, 0.14));
   color: var(--vscode-foreground);
 }

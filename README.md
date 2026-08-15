@@ -18,8 +18,8 @@ Powered by the open-source [**OpenCode**](https://opencode.ai) agent, bundled ri
 - **You stay in control** — inline permission prompts with *Allow once*, *Allow always*, or *Deny*, plus a permissions picker in the composer: *Auto* (the default — safe actions run on their own; outside-the-workspace access and `.env` reads ask first), *Manual* (every tool call asks), or *Bypass* (nothing asks — for workspaces you trust).
 - **Build or plan mode** — `build` edits your code; `plan` is strictly read-only for when you just want a strategy.
 - **Live todo list** — the agent's plan renders as a checklist that ticks off in place as it works, with a progress count.
-- **See it think** — reasoning models get collapsible *Thinking* blocks. Alt-click the thinking pill to hide them without changing how the model works.
-- **Dial the thinking** — set reasoning effort per model from the model menu, the composer pill, or `/effort`. The levels offered are the ones the model actually reports: most local reasoning models are on/off, so you get *Auto · Off · On* rather than a low/medium/high slider that would do nothing. Models with no reasoning support hide the control entirely.
+- **See it think** — reasoning models get collapsible *Thinking* blocks, folded away with how long the model thought once a turn ends. Toggle *Show reasoning* in the behavior menu to hide them without changing how the model works.
+- **Dial the thinking** — set reasoning effort per model from the behavior menu's Thinking slider or `/effort`. The levels offered are the ones the model actually reports: most local reasoning models are on/off, so you get *Auto · Off · On* rather than a low/medium/high slider that would do nothing. Models with no reasoning support hide the control entirely.
 - **Streaming everything** — responses render as markdown with syntax-highlighted code as they arrive.
 
 ## Agents — specialists you define
@@ -52,7 +52,7 @@ Type while the agent is working and hit Enter — your instructions get injected
 
 ## Context, without the busywork
 
-- **Highlight to share** — select code in any file and it's automatically attached to your next message, exact lines and range included. No pill to manage, no setup.
+- **Highlight to share** — select code in any file and it's automatically attached to your next message, exact lines and range included. The **+** menu lists what's going along, so nothing rides invisibly.
 - **`/file`** toggles the open file as context.
 - **Paste images** — screenshots and mockups attach as labelled chips with dimensions; click for a full-size lightbox.
 - **`/compact`** summarizes the conversation to reclaim context when you're running low, and shows you the summary it produced.
@@ -74,7 +74,7 @@ Type while the agent is working and hit Enter — your instructions get injected
 
 ## Fits your window
 
-The panel lives in the Activity Bar (or the secondary side bar), and the composer adapts to narrow layouts — lower-priority controls tuck into a ⋯ menu instead of getting pushed off-screen.
+The panel lives in the Activity Bar (or the secondary side bar). The composer keeps four controls — **+** for context, **?** for slash commands, the model chip and the permissions chip — with everything else one click inside them, so it stays legible in a narrow side bar.
 
 ---
 
