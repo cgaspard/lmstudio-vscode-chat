@@ -1037,13 +1037,10 @@ body {
   flex-shrink: 0;
 }
 /* The chips give way, never the actions. Send/Stop must stay reachable at any
-   panel width — there is no overflow menu to fall back on. */
+   panel width — there is no overflow menu to fall back on. The per-chip shrink
+   factors live with the chip rules below. */
 .composer-right > * {
   flex-shrink: 0;
-}
-.composer-right .model-btn {
-  flex-shrink: 1;
-  min-width: 0;
 }
 .composer-right {
   display: flex;
@@ -2161,15 +2158,16 @@ body.compacting .send-btn {
 .menu-check {
   margin-left: auto;
   color: var(--vscode-foreground);
-  /* on a selected row the ground is the selection color, not the editor bg */
+  display: inline-flex;
+  flex: none;
 }
+/* On a selected row the ground is the selection color, not the editor
+   background — color only, so the name/meta keep their ellipsis. */
 .model-row.active .menu-check,
 .model-row.active .perm-ico,
 .model-row.active .model-name,
 .model-row.active .model-meta {
   color: var(--vscode-list-activeSelectionForeground, var(--vscode-foreground));
-  display: inline-flex;
-  flex: none;
 }
 .menu-check.off {
   opacity: 0.18;
@@ -2456,7 +2454,11 @@ body.compacting .send-btn {
   flex: 0 0 auto;
   color: var(--vscode-descriptionForeground);
 }
-.tool-line.tool-line.collapsed + .tool-detail {
+/* Failure is the one status that still gets a color. */
+.tool-line.status-error .tool-status {
+  color: var(--vscode-errorForeground, #e35d6a);
+}
+.tool-line.collapsed + .tool-detail {
   display: none;
 }
 .tool-detail {
