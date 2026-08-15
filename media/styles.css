@@ -240,7 +240,7 @@ body {
 .parts {
   display: flex;
   flex-direction: column;
-  gap: 11px;
+  gap: 13px;
   overflow-wrap: anywhere;
   line-height: 1.55;
 }
@@ -815,24 +815,6 @@ body {
 }
 
 /* working indicator (persists for the whole turn) */
-.working {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 4px 16px 2px;
-  font-size: 12px;
-  color: var(--vscode-descriptionForeground);
-}
-.working.hidden {
-  display: none;
-}
-.working-label {
-  font-weight: 500;
-}
-.working-elapsed {
-  opacity: 0.6;
-  font-variant-numeric: tabular-nums;
-}
 /* estimated generation-speed stat under a finished assistant turn */
 .gen-stat {
   padding-left: 20px;
@@ -847,7 +829,7 @@ body {
   width: 12px;
   height: 12px;
   border: 2px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.4));
-  border-top-color: var(--accent);
+  border-top-color: var(--vscode-foreground);
   border-radius: 50%;
   animation: spin 0.7s linear infinite;
   flex: 0 0 auto;
@@ -858,58 +840,84 @@ body {
   }
 }
 
-/* status line */
-.status {
-  padding: 0 14px;
-  font-size: 11.5px;
+/* merged activity strip — working label + ticker, or a transient notice; one
+   line, collapsed to nothing when idle and empty */
+.activity {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 16px;
+  font-size: 12px;
   color: var(--vscode-descriptionForeground);
   max-height: 0;
   overflow: hidden;
   transition: max-height 0.15s ease;
 }
-.status.show {
+.activity.show {
   max-height: 40px;
-  padding: 4px 14px;
+  padding: 4px 16px 2px;
 }
-.status.warn {
+.activity-label {
+  font-weight: 500;
+}
+.activity-extra {
+  opacity: 0.6;
+  font-variant-numeric: tabular-nums;
+}
+.activity.warn {
   color: var(--vscode-editorWarning-foreground, #d7a23b);
 }
-.status.error {
+.activity.error {
   color: var(--vscode-errorForeground, #e35d6a);
 }
 
-/* context usage meter */
-.ctx-meter {
+/* ambient context edge — a 2px track flush with the composer box's top border;
+   neutral fill, recolored by the warn/crit classes. The label (#ctx-tip)
+   appears on hover, and stays visible while the box announces ≥70% usage. */
+.ctx-edge {
   display: none;
-  align-items: center;
-  gap: 8px;
-  padding: 2px 16px 0;
-}
-.ctx-bar {
-  flex: 1;
-  height: 4px;
-  border-radius: 3px;
+  position: absolute;
+  top: -1px;
+  left: 10px;
+  right: 10px;
+  height: 2px;
+  border-radius: 2px;
   background: var(--vscode-panel-border, rgba(128, 128, 128, 0.25));
   overflow: hidden;
 }
 .ctx-fill {
   height: 100%;
   width: 0%;
-  background: var(--accent);
-  border-radius: 3px;
+  background: color-mix(in srgb, var(--vscode-foreground) 45%, transparent);
+  border-radius: 2px;
   transition: width 0.25s ease, background 0.2s ease;
 }
-.ctx-meter.warn .ctx-fill {
+.ctx-edge.warn .ctx-fill {
   background: var(--vscode-editorWarning-foreground, #d7a23b);
 }
-.ctx-meter.crit .ctx-fill {
+.ctx-edge.crit .ctx-fill {
   background: var(--vscode-errorForeground, #e35d6a);
 }
 .ctx-label {
-  flex: 0 0 auto;
+  position: absolute;
+  top: 6px;
+  right: 12px;
   font-size: 10.5px;
   color: var(--vscode-descriptionForeground);
   font-variant-numeric: tabular-nums;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  pointer-events: none;
+}
+.composer-box:hover .ctx-label,
+.composer-box.ctx-announce .ctx-label {
+  opacity: 1;
+}
+.composer-box.ctx-warn .ctx-label {
+  color: var(--vscode-editorWarning-foreground, #d7a23b);
+}
+.composer-box.ctx-crit .ctx-label {
+  color: var(--vscode-errorForeground, #e35d6a);
 }
 
 /* composer — single rounded box holding the textarea + toolbar (Claude-style) */
@@ -940,7 +948,7 @@ body {
   opacity: 0.75;
 }
 .goal-ico {
-  color: var(--accent);
+  color: var(--vscode-descriptionForeground);
   display: inline-flex;
   flex: 0 0 auto;
 }
@@ -1026,9 +1034,8 @@ body {
   padding-top: 8px;
   border-top: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.22));
   gap: 6px;
-  /* Never push controls off-screen: the row clips, and layoutComposer() moves
-     lower-priority controls into the ⋯ menu until everything fits. Children
-     must not flex-shrink or the overflow measurement would lie. */
+  /* Four controls + send: the chips ellipsize (max-width below) rather than
+     overflowing, so the row never needs a ⋯ collapse pass. */
   flex-wrap: nowrap;
   overflow: hidden;
 }
@@ -1036,67 +1043,43 @@ body {
 .composer-right > * {
   flex-shrink: 0;
 }
-/* The ⋯ menu: collapsed composer controls, stacked full-width. */
-.overflow-menu {
-  padding: 6px;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-.overflow-menu.hidden {
-  display: none;
-}
-.overflow-menu .tool-pill,
-.overflow-menu .picker,
-.overflow-menu .ctxref {
-  width: 100%;
-  justify-content: flex-start;
-  max-width: none;
-}
-.tool-sep.hidden {
-  display: none;
-}
 .composer-right {
   display: flex;
   align-items: center;
   gap: 6px;
   min-width: 0;
 }
-.composer-right .picker {
-  flex: 0 1 auto;
-  max-width: 150px;
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: 7px;
-  color: var(--vscode-descriptionForeground);
-  padding: 3px 4px;
-  font-size: 11.5px;
-}
-.composer-right .picker:hover {
-  background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.12));
-  color: var(--vscode-foreground);
-}
-.composer-right .picker.agent {
-  flex: 0 0 auto;
-  max-width: 70px;
-}
-.composer-right .picker.perm {
-  flex: 0 0 auto;
-  max-width: 110px;
-}
-/* Bypass leaves the agent unattended — keep a quiet but visible reminder on. */
-.picker.perm.bypass {
-  color: var(--vscode-editorWarning-foreground, #cca700);
-}
 .tool-pill.icon-only {
   padding: 4px;
   border-radius: 8px;
 }
 .tool-pill.hidden {
-  display: none; /* e.g. the ⋯ overflow button when everything fits */
+  display: none;
+}
+/* + button: quiet dot when context beyond the message will be sent */
+#btn-add {
+  position: relative;
+}
+#btn-add.active::after {
+  content: '';
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--vscode-foreground);
+}
+/* Bypass leaves the agent unattended — the shield is the always-visible
+   reminder, pinned next to send whenever the mode isn't the default. */
+.perm-shield {
+  color: var(--vscode-descriptionForeground);
+}
+.perm-shield.bypass {
+  color: var(--vscode-editorWarning-foreground, #d7a23b);
 }
 
-/* model button + popover menu */
+/* model + behavior chips + popover menus */
 .model-btn {
   display: inline-flex;
   align-items: center;
@@ -1110,6 +1093,16 @@ body {
   padding: 3px 6px;
   font-size: 11.5px;
   cursor: pointer;
+}
+/* The two chips ellipsize under pressure instead of overflowing the row; the
+   model chip gives way first (its name is recognizable truncated). */
+.composer-right .model-btn {
+  flex-shrink: 1;
+  min-width: 56px;
+}
+.composer-right .behavior-btn {
+  flex-shrink: 0;
+  max-width: 150px;
 }
 .model-btn:hover {
   background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.12));
@@ -1133,6 +1126,15 @@ body {
   background: var(--vscode-descriptionForeground);
   opacity: 0.5;
 }
+/* Selected but not loaded — the model you'd use, not yet resident. Only the
+   composer chip gets this; menu rows stay dim so the list isn't a wall of
+   white. */
+.model-dot.selected {
+  background: var(--vscode-foreground);
+  opacity: 1;
+}
+/* Loaded and ready. The one green in the UI: it carries a state nothing else
+   shows, the way red carries failure. */
 .model-dot.loaded {
   background: var(--vscode-testing-iconPassed, #4ec07a);
   opacity: 1;
@@ -1144,7 +1146,7 @@ body {
   background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
   border: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
   border-radius: 10px;
-  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 8px 24px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.25));
   max-height: 52vh;
   display: flex;
   flex-direction: column;
@@ -1199,9 +1201,9 @@ body {
   background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.12));
 }
 .ctx-preset.active {
-  background: var(--accent);
-  color: var(--accent-fg);
-  border-color: transparent;
+  background: var(--vscode-list-activeSelectionBackground, rgba(128, 128, 128, 0.22));
+  color: var(--vscode-list-activeSelectionForeground, var(--vscode-foreground));
+  border-color: var(--vscode-panel-border, rgba(128, 128, 128, 0.4));
 }
 /* Hidden entirely for models that report no reasoning support, so the menu
    shows no control rather than a dead one. */
@@ -1236,7 +1238,7 @@ body {
   background: var(--vscode-list-hoverBackground, rgba(128, 128, 128, 0.12));
 }
 .model-row.active {
-  background: var(--vscode-list-activeSelectionBackground, rgba(108, 92, 231, 0.22));
+  background: var(--vscode-list-activeSelectionBackground, rgba(128, 128, 128, 0.18));
 }
 .model-info {
   display: flex;
@@ -1266,7 +1268,7 @@ body {
   letter-spacing: 0.3px;
   padding: 1px 5px;
   border-radius: 4px;
-  background: var(--vscode-badge-background, rgba(108, 92, 231, 0.25));
+  background: var(--vscode-badge-background, rgba(128, 128, 128, 0.25));
   color: var(--vscode-badge-foreground, var(--vscode-foreground));
   white-space: nowrap;
   overflow: hidden;
@@ -1502,9 +1504,9 @@ body {
 }
 .tool-pill.active {
   opacity: 1;
-  color: var(--accent-fg);
-  background: var(--accent);
-  border-color: transparent;
+  color: var(--vscode-foreground);
+  background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.2));
+  border-color: var(--vscode-panel-border, rgba(128, 128, 128, 0.45));
 }
 
 /* Attachments row above the input (image chips). Divided from the textarea by
@@ -1687,6 +1689,7 @@ body.hide-reasoning .part-reasoning {
 }
 .send-btn.busy {
   background: var(--vscode-button-secondaryBackground, #555);
+  color: var(--vscode-button-secondaryForeground, #fff);
 }
 
 /* history overlay */
@@ -1712,7 +1715,7 @@ body.hide-reasoning .part-reasoning {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 8px 24px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.25));
 }
 .overlay-head {
   display: flex;
@@ -1815,7 +1818,7 @@ body.hide-reasoning .part-reasoning {
   background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
   border: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
   border-radius: 10px;
-  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 8px 24px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.25));
   padding: 4px;
   max-height: 40vh;
   overflow-y: auto;
@@ -1869,8 +1872,8 @@ body.hide-reasoning .part-reasoning {
   font-size: 9.5px;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  color: var(--vscode-charts-green, #4ec9a8);
-  border: 1px solid var(--vscode-charts-green, rgba(78, 201, 168, 0.5));
+  color: var(--vscode-descriptionForeground);
+  border: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.5));
   border-radius: 4px;
   padding: 0 4px;
   vertical-align: middle;
@@ -2006,9 +2009,9 @@ body.hide-reasoning .part-reasoning {
   flex: 0 0 auto;
   background: var(--vscode-descriptionForeground);
 }
-.mcp-dot.ok { background: var(--vscode-charts-green, #4ec9a8); box-shadow: 0 0 6px var(--vscode-charts-green, rgba(78, 201, 168, 0.6)); }
-.mcp-dot.err { background: var(--vscode-charts-red, #e06b6b); }
-.mcp-dot.off { background: var(--vscode-charts-yellow, #e0b250); }
+.mcp-dot.ok { background: var(--vscode-foreground); }
+.mcp-dot.err { background: var(--vscode-errorForeground, #e35d6a); }
+.mcp-dot.off { background: var(--vscode-descriptionForeground); }
 .mcp-dot.pending { background: var(--vscode-descriptionForeground); }
 .mcp-row-body { min-width: 0; }
 .mcp-row-top {
@@ -2037,9 +2040,9 @@ body.hide-reasoning .part-reasoning {
   font-variant-numeric: tabular-nums;
   color: var(--vscode-descriptionForeground);
 }
-.mcp-status-label.ok { color: var(--vscode-charts-green, #4ec9a8); }
-.mcp-status-label.err { color: var(--vscode-charts-red, #e06b6b); }
-.mcp-status-label.off { color: var(--vscode-charts-yellow, #e0b250); }
+.mcp-status-label.ok { color: var(--vscode-descriptionForeground); }
+.mcp-status-label.err { color: var(--vscode-errorForeground, #e35d6a); }
+.mcp-status-label.off { color: var(--vscode-descriptionForeground); }
 .mcp-detail {
   font-family: var(--vscode-editor-font-family, monospace);
   font-size: 11px;
@@ -2067,7 +2070,7 @@ body.hide-reasoning .part-reasoning {
 }
 .mcp-error {
   font-size: 11.5px;
-  color: var(--vscode-charts-red, #e06b6b);
+  color: var(--vscode-errorForeground, #e35d6a);
   margin-top: 3px;
   line-height: 1.45;
 }
@@ -2145,4 +2148,433 @@ body.compacting .send-btn {
   font-weight: 500;
   opacity: 0.5;
   vertical-align: middle;
+}
+
+/* ---- Option 4 menu components: rows, checks, section chrome ---------------- */
+/* A clickable row in the behavior / add-context menus. Matches .model-row
+   geometry so mixed sections read as one system. */
+.menu-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 7px 9px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--vscode-foreground);
+  font-size: 12.5px;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.menu-row:hover {
+  background: var(--vscode-list-hoverBackground, rgba(128, 128, 128, 0.12));
+}
+/* Informational row (e.g. the auto-attached selection) — not clickable. */
+.menu-row.info {
+  cursor: default;
+  color: var(--vscode-descriptionForeground);
+}
+.menu-row.info:hover {
+  background: transparent;
+}
+.menu-row-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  flex: 1;
+}
+.menu-row-meta {
+  font-size: 10.5px;
+  color: var(--vscode-descriptionForeground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.menu-check {
+  margin-left: auto;
+  color: var(--vscode-foreground);
+  display: inline-flex;
+  flex: none;
+}
+.menu-check.off {
+  opacity: 0.18;
+}
+.menu-sep {
+  height: 1px;
+  background: var(--vscode-panel-border, rgba(128, 128, 128, 0.25));
+  margin: 4px 8px;
+}
+/* "Add server…" toggle row sits between the server list and its form. */
+.menu-add-row {
+  color: var(--vscode-descriptionForeground);
+}
+.menu-add-row:hover {
+  color: var(--vscode-foreground);
+}
+/* The server section of the combined model menu stays compact; the model list
+   below keeps the scroll. */
+.server-section {
+  max-height: 132px;
+  overflow-y: auto;
+  flex: none;
+}
+/* Selection rows built from .model-row in the agent/permission sections. */
+.model-row.menu-pick .model-meta.warntext {
+  color: color-mix(in srgb, var(--vscode-editorWarning-foreground, #d7a23b) 80%, var(--vscode-descriptionForeground));
+}
+.model-row.warnrow .model-name {
+  color: var(--vscode-editorWarning-foreground, #d7a23b);
+}
+/* The behavior menu stacks three sections; cap section lists so the whole menu
+   fits a short panel and scrolls internally instead of overflowing it. */
+#agent-menu-list,
+#perm-menu-list {
+  max-height: 180px;
+  overflow-y: auto;
+  flex: none;
+}
+#behavior-menu,
+#model-menu,
+#add-menu {
+  max-height: min(70vh, 520px);
+  overflow-y: auto;
+}
+
+/* Hidden-state rules for the Option 4 components (this stylesheet defines
+   .hidden per component, not globally — without these the toggles are inert). */
+.spinner.hidden,
+.server-add.hidden,
+.menu-row.hidden {
+  display: none;
+}
+
+/* ---- Behavior menu, Claude-style compact layout --------------------------- */
+/* One-line section: label on the left, chips or the effort slider right. */
+.menu-inline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+}
+.menu-inline-label {
+  font-size: 12px;
+  color: var(--vscode-foreground);
+  white-space: nowrap;
+}
+.menu-inline .ctx-presets {
+  flex-wrap: nowrap;
+  overflow: hidden;
+}
+/* Permission rows carry a leading mode icon, like Claude Code's mode list. */
+.perm-row .perm-ico {
+  display: inline-flex;
+  color: var(--vscode-descriptionForeground);
+  flex: none;
+}
+.perm-row.active .perm-ico {
+  color: var(--vscode-foreground);
+}
+.perm-row.warnrow .perm-ico {
+  color: var(--vscode-editorWarning-foreground, #d7a23b);
+}
+/* Discrete thinking slider: a track of dot-buttons, current one enlarged. */
+.effort-dots {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  flex: none;
+}
+.effort-dot {
+  position: relative;
+  width: 26px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+/* the connecting track */
+.effort-dot::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
+}
+.effort-dot:first-child::before {
+  left: 50%;
+}
+.effort-dot:last-child::before {
+  right: 50%;
+}
+/* the dot itself */
+.effort-dot::after {
+  content: '';
+  position: relative;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--vscode-descriptionForeground);
+  transition: width 0.12s ease, height 0.12s ease, background 0.12s ease;
+}
+.effort-dot:hover::after {
+  background: var(--vscode-foreground);
+}
+.effort-dot.active::after {
+  width: 13px;
+  height: 13px;
+  background: var(--vscode-foreground);
+  box-shadow: 0 0 0 1px var(--vscode-panel-border, rgba(128, 128, 128, 0.4));
+}
+.effort-dot:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder, var(--accent));
+  outline-offset: -1px;
+  border-radius: 6px;
+}
+/* Behavior chip: permission-forward — icon + short mode label. */
+.behavior-btn .behavior-ico {
+  display: inline-flex;
+  flex: none;
+}
+.behavior-btn.bypass {
+  color: var(--vscode-editorWarning-foreground, #d7a23b);
+}
+.behavior-btn.bypass:hover {
+  color: var(--vscode-editorWarning-foreground, #d7a23b);
+}
+
+/* ---- /help panel: grouped, scannable command list -------------------------- */
+.help-panel {
+  align-self: stretch;
+  text-align: left;
+  padding: 10px 14px 12px;
+}
+.help-head {
+  font-weight: 600;
+  font-size: 12.5px;
+  margin-bottom: 2px;
+}
+.help-group {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--vscode-descriptionForeground);
+  margin: 10px 0 3px;
+}
+.help-row {
+  display: grid;
+  grid-template-columns: fit-content(220px) 1fr;
+  gap: 3px 12px;
+  padding: 2.5px 0;
+  align-items: baseline;
+}
+.help-row code {
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 11.5px;
+  color: var(--vscode-textPreformat-foreground, var(--vscode-foreground));
+  white-space: nowrap;
+}
+.help-hint {
+  font-size: 12px;
+  color: var(--vscode-descriptionForeground);
+  line-height: 1.45;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* The Thinking block hides for models with no reasoning support; it lost the
+   .model-menu-foot class in the v2 layout, so it needs its own hidden rule. */
+#effort-foot.hidden {
+  display: none;
+}
+
+/* ---- Output area: quiet tool lines (Option A) ------------------------------ */
+/* A completed call is one line — no box, no fill. The caret and the payload
+   hint appear only when there is something to expand, so the affordance never
+   promises a click that does nothing. */
+.tool-line {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  padding: 4px 6px;
+  margin: 0 -6px;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  outline: none;
+}
+.tool-line:hover {
+  background: var(--vscode-list-hoverBackground, rgba(128, 128, 128, 0.10));
+}
+.tool-line.inert {
+  cursor: default;
+}
+.tool-line.inert:hover {
+  background: transparent;
+}
+.tool-line:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder, var(--accent));
+  outline-offset: -1px;
+}
+.tool-line .tool-chev {
+  flex: 0 0 auto;
+  width: 10px;
+  height: 10px;
+  border: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--vscode-descriptionForeground);
+  opacity: 0.7;
+  transform: rotate(-90deg); /* caret icon points down; collapsed points right */
+  transition: transform 0.12s ease, opacity 0.12s ease;
+}
+.tool-line:hover .tool-chev {
+  opacity: 1;
+}
+.tool-line:not(.collapsed) .tool-chev {
+  transform: rotate(0deg);
+}
+.tool-line .tool-name {
+  font-weight: 600;
+  flex: 0 0 auto;
+}
+.tool-line .tool-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--vscode-descriptionForeground);
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 11.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Payload hint: says what is inside before you open it. */
+.tool-hint {
+  flex: 0 0 auto;
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 10.5px;
+  color: var(--vscode-descriptionForeground);
+  opacity: 0.75;
+}
+.tool-line:hover .tool-hint {
+  opacity: 1;
+}
+.diffchip .add {
+  color: var(--vscode-gitDecoration-addedResourceForeground, #7cbf8e);
+}
+.diffchip .del {
+  color: var(--vscode-gitDecoration-deletedResourceForeground, #d98a93);
+}
+.tool-line .tool-status {
+  flex: 0 0 auto;
+  color: var(--vscode-descriptionForeground);
+}
+.tool-line.status-error .tool-status {
+  color: var(--vscode-errorForeground, #e35d6a);
+}
+.tool-line.collapsed + .tool-detail {
+  display: none;
+}
+.tool-detail {
+  padding: 4px 0 2px 17px;
+}
+
+/* Edit diffs — collapsed by default, opened from the line above. */
+.tool-diff {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--vscode-textCodeBlock-background, rgba(128, 128, 128, 0.10));
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 11px;
+  line-height: 1.5;
+  overflow-x: auto;
+  white-space: pre;
+  color: var(--vscode-descriptionForeground);
+}
+.tool-diff .dl-add {
+  display: block;
+  background: var(--vscode-diffEditor-insertedLineBackground, rgba(90, 160, 110, 0.16));
+  color: var(--vscode-foreground);
+}
+.tool-diff .dl-del {
+  display: block;
+  background: var(--vscode-diffEditor-removedLineBackground, rgba(200, 90, 100, 0.14));
+  color: var(--vscode-foreground);
+}
+.tool-diff .dl-hunk {
+  display: block;
+  color: var(--vscode-descriptionForeground);
+  opacity: 0.7;
+}
+.tool-diff .dl-ctx {
+  display: block;
+}
+.tool-diff .dim {
+  opacity: 0.6;
+}
+
+/* ---- Turn timestamps + time-gap dividers ---------------------------------- */
+.gen-time {
+  color: var(--vscode-descriptionForeground);
+  font-variant-numeric: tabular-nums;
+  cursor: default;
+}
+.time-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 4px 0;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: var(--vscode-descriptionForeground);
+  opacity: 0.75;
+  font-variant-numeric: tabular-nums;
+}
+.time-divider::before,
+.time-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--vscode-panel-border, rgba(128, 128, 128, 0.22));
+}
+
+/* Per-row timestamp at the right edge: when this call happened. */
+.tool-time {
+  flex: 0 0 auto;
+  min-width: 52px;
+  text-align: right;
+  font-size: 10.5px;
+  color: var(--vscode-descriptionForeground);
+  opacity: 0.65;
+  font-variant-numeric: tabular-nums;
+}
+.tool-line:hover .tool-time {
+  opacity: 1;
+}
+
+/* Tool rows sit in their own rhythm: a touch more air than prose parts, so a
+   run of calls reads as a list rather than a block. */
+.part-tool + .part-tool {
+  margin-top: 3px;
+}
+.tool-detail {
+  margin-top: 2px;
 }

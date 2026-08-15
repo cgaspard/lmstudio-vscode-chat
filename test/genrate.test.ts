@@ -101,18 +101,23 @@ test('nothing measurable returns null rather than a bogus rate', () => {
   assert.equal(summarize(one), null);
 });
 
-test('formatRate reports the whole cost of the turn, and who ran it', () => {
+test('formatRate trims the line to four fields; agent/total/thinking live in the tooltip', () => {
   assert.equal(
     formatRate({
       agent: 'build', total: 876, input: 7995, grandTotal: 8871,
       reasoning: 776, seconds: 21.06, tps: 41.6, exact: true,
     }),
-    'build · 8.0k in · 876 out (776 thinking) · 8.9k total · 21.1s · 42 tok/s',
+    '7.8K in · 876 out · 21.1s · 42 tok/s',
   );
-  // Mid-stream: no exact usage yet, so no input/total and everything is ~.
+  // Mid-stream: no exact usage yet, so no input and everything is ~.
   assert.equal(
     formatRate({ total: 100, input: 0, grandTotal: 0, reasoning: 0, seconds: 2, tps: 50, exact: false }),
     '~100 out · 2.0s · ~50 tok/s',
+  );
+  // 1024-base like the context meter: 68_700 reads "67K" in both surfaces.
+  assert.equal(
+    formatRate({ total: 233, input: 68700, grandTotal: 68933, reasoning: 0, seconds: 80.9, tps: 2.88, exact: true }),
+    '67K in · 233 out · 80.9s · 3 tok/s',
   );
 });
 

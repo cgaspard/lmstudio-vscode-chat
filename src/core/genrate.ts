@@ -19,6 +19,7 @@
  * message as { input, output, reasoning, cache }. We prefer those exact numbers
  * and fall back to a chars/4 estimate mid-stream, before the totals land.
  */
+import { formatTokens } from './context';
 
 /**
  * Longest gap between two deltas still counted as generation time. Local models
@@ -177,37 +178,41 @@ export function summarize(rate: TurnRate): RateSummary | null {
 }
 
 /**
- * The one-line stat shown under a finished turn. Surfacing the reasoning share
- * matters: a turn can be ~90% thinking, and a single blended token count hides
- * that completely.
+ * The one-line stat shown under a finished turn, trimmed to four fields:
+ * "68K in · 233 out · 80.9s · 3 tok/s". The agent name, grand total and the
+ * thinking share belong in the caller's tooltip — on prompt-heavy agentic
+ * turns "total" rounds to the same figure as "in", and tok/s is already the
+ * out/seconds pair restated, so the extra fields were noise on the line.
  */
 export function formatRate(s: RateSummary): string {
   const approx = s.exact ? '' : '~';
   const bits: string[] = [];
-  if (s.agent) {
-    bits.push(s.agent);
-  }
   // Prompt size first — on a 32k local model it's usually the dominant cost and
   // the thing that decides when you have to compact.
   if (s.input > 0) {
     bits.push(`${compact(s.input)} in`);
   }
-  const out =
-    s.reasoning > 0
-      ? `${approx}${compact(s.total)} out (${compact(s.reasoning)} thinking)`
-      : `${approx}${compact(s.total)} out`;
-  bits.push(out);
-  if (s.grandTotal > 0) {
-    bits.push(`${compact(s.grandTotal)} total`);
-  }
+  bits.push(`${approx}${compact(s.total)} out`);
   bits.push(`${s.seconds.toFixed(1)}s`);
   bits.push(`${approx}${Math.round(s.tps)} tok/s`);
   return bits.join(' · ');
 }
 
-/** 8192 -> "8.2k". Keeps the stat line readable when prompts run large. */
+/**
+ * Same 1024 base as the context meter (context.ts formatTokens), so one token
+ * count never renders as two different numbers in the two surfaces (the old
+ * bug: "67K context" and "68k total" for the same value). Values under 10K
+ * keep one decimal — "7.8K" — where formatTokens' whole-K rounding would be
+ * too coarse for a stat line.
+ */
 function compact(n: number): string {
-  return n >= 10000 ? `${Math.round(n / 1000)}k` : n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
+  if (n >= 10240) {
+    return formatTokens(n);
+  }
+  if (n >= 1024) {
+    return (n / 1024).toFixed(1).replace(/\.0$/, '') + 'K';
+  }
+  return String(Math.round(n));
 }
 
 /** "Thought for 12.4s" / "Thought for 1m 03s" — the collapsed reasoning summary. */

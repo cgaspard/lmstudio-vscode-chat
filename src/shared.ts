@@ -211,6 +211,7 @@ export type WebviewToHost =
   // Persist a new tool-approval posture (settings) — the server picks it up on
   // its next spawn; the host acks with 'permissionMode'.
   | { type: 'setPermissionMode'; mode: PermissionMode }
+  | { type: 'setMinContext'; tokens: number }
   | { type: 'requestAgents' }
   /** Scaffold a new agent definition on disk and open it for editing. */
   | { type: 'createAgent'; name: string }

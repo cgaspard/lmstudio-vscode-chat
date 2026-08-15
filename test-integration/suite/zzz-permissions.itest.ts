@@ -7,7 +7,7 @@ import * as assert from 'node:assert';
 import * as vscode from 'vscode';
 import * as helpers from './helpers';
 
-const { openPanel, post, count, attr, allText, setSelect, waitFor } = helpers;
+const { openPanel, post, count, attr, allText, text, click, waitFor } = helpers;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -27,8 +27,8 @@ describe('permission mode + abort notice', function () {
 
   before(async () => {
     await openPanel();
-    // Own precondition: the picker exists with its three modes rendered.
-    await waitFor('#perm-select option', (n) => n === 3);
+    // Own precondition: the permissions section exists with its three modes.
+    await waitFor('#perm-menu-list .model-row', (n) => n === 3);
   });
 
   after(async () => {
@@ -48,31 +48,33 @@ describe('permission mode + abort notice', function () {
     vscode.workspace.getConfiguration('lmstudioCode').get<string>('permissionMode');
 
   it('offers the three modes and starts on the default', async () => {
-    const labels = await allText('#perm-select option');
-    assert.deepStrictEqual(labels, ['Ask: risky only', 'Ask: always', 'Bypass all']);
-    assert.strictEqual(await attr('#perm-select', 'value'), 'default');
+    const labels = await allText('#perm-menu-list .model-row .model-name');
+    assert.deepStrictEqual(labels, ['Auto', 'Manual', 'Bypass']);
+    assert.strictEqual(await text('#perm-menu-list .model-row.active .model-name'), 'Auto');
   });
 
   it('switching to bypass persists the setting, acks with a chip, and flags the picker', async () => {
     const chipsBefore = await count('.sys-chip');
-    assert.ok(await setSelect('#perm-select', 'bypass'));
+    assert.ok(await click('#perm-menu-list .model-row[data-mode="bypass"]'));
 
     // The bridge writes the real setting and acks; the ack renders the chip.
     await waitUntil(async () => (await count('.sys-chip')) > chipsBefore);
     const chips = await allText('.sys-chip');
     const chip = chips[chips.length - 1];
-    assert.ok(/Permissions: Never ask \(bypass\)/.test(chip), `unexpected chip: ${chip}`);
+    assert.ok(/Permissions: Bypass/.test(chip), `unexpected chip: ${chip}`);
 
     assert.strictEqual(effectiveMode(), 'bypass');
 
-    // The picker keeps a visible reminder that bypass is on.
-    assert.match((await attr('#perm-select', 'class')) ?? '', /bypass/);
+    // The behavior chip itself carries the reminder that bypass is on.
+    await waitFor('#behavior-btn.bypass', (n) => n === 1);
+    assert.strictEqual(await text('#behavior-btn-label'), 'Bypass');
   });
 
   it('switching back to default clears the bypass flag and persists', async () => {
-    assert.ok(await setSelect('#perm-select', 'default'));
+    assert.ok(await click('#perm-menu-list .model-row[data-mode="default"]'));
     await waitUntil(async () => effectiveMode() === 'default');
-    assert.doesNotMatch((await attr('#perm-select', 'class')) ?? '', /bypass/);
+    await waitFor('#behavior-btn.bypass', (n) => n === 0);
+    assert.strictEqual(await text('#behavior-btn-label'), 'Auto');
   });
 
   it('an abort renders exactly one muted Stopped chip, never red error bubbles', async () => {

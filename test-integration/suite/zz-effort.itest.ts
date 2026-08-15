@@ -12,7 +12,7 @@
 import * as assert from 'node:assert';
 import * as helpers from './helpers';
 
-const { openPanel, post, count, text, click, classes, waitFor } = helpers;
+const { openPanel, post, count, text, click, classes, attr, waitFor } = helpers;
 
 const BINARY = { allowedOptions: ['off', 'on'], default: 'on' };
 const GRANULAR = { allowedOptions: ['low', 'medium', 'high'], default: 'medium' };
@@ -58,7 +58,7 @@ describe('reasoning effort', function () {
     // Wait for THIS suite's own state to render before asserting on it. The
     // webview is shared, so inheriting a previous suite's models would silently
     // change which levels the picker derives.
-    await waitFor('#effort-presets .ctx-preset', (n) => n === 3);
+    await waitFor('#effort-presets .effort-dot', (n) => n === 3);
   });
 
   after(async () => {
@@ -72,13 +72,13 @@ describe('reasoning effort', function () {
   });
 
   it('a binary model offers Auto/Off/On — not a low/medium/high slider', async () => {
-    await waitFor('#effort-presets .ctx-preset', (n) => n > 0);
-    const labels = await classes('#effort-presets .ctx-preset');
+    await waitFor('#effort-presets .effort-dot', (n) => n > 0);
+    const labels = await classes('#effort-presets .effort-dot');
     assert.strictEqual(labels.length, 3, 'binary models get exactly three levels');
-    assert.strictEqual(await text('#effort-presets .ctx-preset:nth-child(1)'), 'Auto');
-    assert.strictEqual(await text('#effort-presets .ctx-preset:nth-child(2)'), 'Off');
+    assert.strictEqual(await attr('#effort-presets .effort-dot:nth-child(1)', 'aria-label'), 'Auto');
+    assert.strictEqual(await attr('#effort-presets .effort-dot:nth-child(2)', 'aria-label'), 'Off');
     // "On", never "High" — the model cannot deliver a depth distinction.
-    assert.strictEqual(await text('#effort-presets .ctx-preset:nth-child(3)'), 'On');
+    assert.strictEqual(await attr('#effort-presets .effort-dot:nth-child(3)', 'aria-label'), 'On');
   });
 
   it('explains the on/off limitation rather than silently collapsing it', async () => {
@@ -87,54 +87,56 @@ describe('reasoning effort', function () {
 
   it('a granular model offers the levels it actually declares', async () => {
     await postModels('openai/gpt-oss-20b');
-    await waitFor('#effort-presets .ctx-preset', (n) => n === 5);
-    assert.strictEqual(await text('#effort-presets .ctx-preset:nth-child(3)'), 'Low');
-    assert.strictEqual(await text('#effort-presets .ctx-preset:nth-child(4)'), 'Med');
-    assert.strictEqual(await text('#effort-presets .ctx-preset:nth-child(5)'), 'High');
+    await waitFor('#effort-presets .effort-dot', (n) => n === 5);
+    assert.strictEqual(await attr('#effort-presets .effort-dot:nth-child(3)', 'aria-label'), 'Low');
+    assert.strictEqual(await attr('#effort-presets .effort-dot:nth-child(4)', 'aria-label'), 'Med');
+    assert.strictEqual(await attr('#effort-presets .effort-dot:nth-child(5)', 'aria-label'), 'High');
     assert.strictEqual(await text('#effort-note'), '', 'no caveat needed for a granular model');
   });
 
   it('a model reporting no reasoning support hides the control entirely', async () => {
     await postModels('qwen/qwen3-vl-8b');
     await waitFor('#effort-foot:not(.hidden)', (n) => n === 0);
-    // ...and the composer pill goes with it, rather than becoming a dead toggle.
-    await waitFor('#btn-think:not(.hidden)', (n) => n === 0);
+    // ...and the behavior chip drops its thinking segment, rather than
+    // showing a dead level for a model that can't reason.
+    // ...and the whole Thinking row goes with it (asserted above via
+    // #effort-foot); the chip itself is permission-forward and unaffected.
   });
 
   it('selecting a level marks it active', async () => {
     await postModels('openai/gpt-oss-20b');
-    await waitFor('#effort-presets .ctx-preset', (n) => n === 5);
-    assert.ok(await click('#effort-presets .ctx-preset:nth-child(5)'), 'High should be clickable');
-    await waitFor('#effort-presets .ctx-preset.active', (n) => n === 1);
-    assert.strictEqual(await text('#effort-presets .ctx-preset.active'), 'High');
+    await waitFor('#effort-presets .effort-dot', (n) => n === 5);
+    assert.ok(await click('#effort-presets .effort-dot:nth-child(5)'), 'High should be clickable');
+    await waitFor('#effort-presets .effort-dot.active', (n) => n === 1);
+    assert.strictEqual(await attr('#effort-presets .effort-dot.active', 'aria-label'), 'High');
   });
 
   it('effort is remembered per model, and clamped when it does not carry over', async () => {
     // High was just chosen on the granular model. The binary model has no
     // equivalent, so it must degrade rather than send a meaningless level.
     await postModels('qwen/qwen3.6-27b');
-    await waitFor('#effort-presets .ctx-preset', (n) => n === 3);
-    const active = await text('#effort-presets .ctx-preset.active');
+    await waitFor('#effort-presets .effort-dot', (n) => n === 3);
+    const active = await attr('#effort-presets .effort-dot.active', 'aria-label');
     assert.ok(active === 'Auto' || active === 'On', `unexpected clamped level: ${active}`);
     // Back to the granular model: its own choice survived the round trip.
     await postModels('openai/gpt-oss-20b');
-    await waitFor('#effort-presets .ctx-preset', (n) => n === 5);
-    assert.strictEqual(await text('#effort-presets .ctx-preset.active'), 'High');
+    await waitFor('#effort-presets .effort-dot', (n) => n === 5);
+    assert.strictEqual(await attr('#effort-presets .effort-dot.active', 'aria-label'), 'High');
   });
 
-  it('the composer pill reflects the current level', async () => {
+  it('the Thinking row label reflects the current level', async () => {
     await postModels('openai/gpt-oss-20b');
-    await waitFor('#btn-think:not(.hidden)', (n) => n === 1);
-    assert.strictEqual(await text('#btn-think'), 'High');
+    await waitFor('#effort-label', (n) => n === 1);
+    assert.strictEqual(await text('#effort-label'), 'Thinking (High)');
   });
 
-  it('the pill names the Auto state "Auto", not "Thinking"', async () => {
+  it('the label names the Auto state "Auto", not "Thinking"', async () => {
     // "Thinking" sitting next to "On" read as a third on-state instead of
     // "let the model decide", which is what Auto actually means.
     await postModels('qwen/qwen3.6-27b');
-    await waitFor('#effort-presets .ctx-preset', (n) => n === 3);
-    assert.ok(await click('#effort-presets .ctx-preset:nth-child(1)'), 'Auto should be clickable');
-    await waitFor('#btn-think:not(.hidden)', (n) => n === 1);
-    assert.strictEqual(await text('#btn-think'), 'Auto');
+    await waitFor('#effort-presets .effort-dot', (n) => n === 3);
+    assert.ok(await click('#effort-presets .effort-dot:nth-child(1)'), 'Auto should be clickable');
+    await waitFor('#effort-label', (n) => n === 1);
+    assert.strictEqual(await text('#effort-label'), 'Thinking (Auto)');
   });
 });

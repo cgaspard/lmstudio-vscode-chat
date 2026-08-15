@@ -181,8 +181,15 @@ describe('polling e2e (issue #7)', function () {
 
   it('fast-polls the model list only while the picker is open', async () => {
     const openSince = Date.now();
+    // Ensure-open rather than assume-toggle: a prior suite may have left the
+    // menu open, in which case the first click closes it.
     assert.ok(await click('#model-btn'), 'model button should be clickable');
-    await waitFor('#model-menu:not(.hidden)', (n) => n === 1, 5_000);
+    try {
+      await waitFor('#model-menu:not(.hidden)', (n) => n === 1, 1_500);
+    } catch {
+      assert.ok(await click('#model-btn'), 'model button should be clickable (retry)');
+      await waitFor('#model-menu:not(.hidden)', (n) => n === 1, 5_000);
+    }
     await sleep(9_500);
     const during = fake.countSince('/api/v1/models', openSince);
     assert.ok(during >= 2, `picker-open fast poll should list every ~4s, saw ${during} in 9.5s`);
