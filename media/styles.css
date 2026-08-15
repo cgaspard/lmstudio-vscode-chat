@@ -2382,3 +2382,9 @@ body.compacting .send-btn {
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
+
+/* The Thinking block hides for models with no reasoning support; it lost the
+   .model-menu-foot class in the v2 layout, so it needs its own hidden rule. */
+#effort-foot.hidden {
+  display: none;
+}
