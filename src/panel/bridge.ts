@@ -546,6 +546,9 @@ export class ChatBridge {
         case 'setPermissionMode':
           await this.setPermissionMode(msg.mode);
           break;
+        case 'setMinContext':
+          await this.setMinContext(msg.tokens);
+          break;
         case 'questionReply':
           await this.client?.replyQuestion(msg.requestID, msg.answers);
           break;
@@ -633,6 +636,39 @@ export class ChatBridge {
     await vscode.workspace.getConfiguration('lmstudioCode').update('permissionMode', value, target);
     log(`permission mode set to ${value} (server respawns on next request)`);
     this.post({ type: 'permissionMode', mode: value });
+  }
+
+  /**
+   * "Context on load" from the model menu: persist the requested size, then
+   * grow the current model to it right away if it's already loaded smaller —
+   * otherwise the choice would silently wait for the next load. LM Studio has
+   * the final say on the window it actually grants.
+   */
+  private async setMinContext(tokens: number): Promise<void> {
+    const value = Math.max(1024, Math.floor(tokens));
+    const target = vscode.workspace.workspaceFolders?.length
+      ? vscode.ConfigurationTarget.Workspace
+      : vscode.ConfigurationTarget.Global;
+    await vscode.workspace
+      .getConfiguration('lmstudioCode')
+      .update('minContextLength', value, target);
+    log(`context-on-load set to ${value}`);
+    if (!this.currentModel) {
+      return;
+    }
+    const result = await this.deps.lmStudio.ensureContext(
+      this.currentModel,
+      value,
+      getConfig().gpuOffload,
+      (m) => this.post({ type: 'status', text: m }),
+    );
+    if (result.note) {
+      this.post({ type: 'status', text: result.note, kind: 'warn' });
+      setTimeout(() => this.post({ type: 'status', text: '' }), 4000);
+    } else {
+      this.post({ type: 'status', text: '' });
+    }
+    await this.refreshModelsToWebview();
   }
 
   private async init(): Promise<ConnectResult> {

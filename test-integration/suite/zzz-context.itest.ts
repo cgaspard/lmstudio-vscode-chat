@@ -121,16 +121,17 @@ describe('context window e2e (live LM Studio)', function () {
       .update('defaultModel', prevDefaultModel, vscode.ConfigurationTarget.Global);
   });
 
-  it('the picker offers no context sizes — LM Studio owns the window', async () => {
+  it('offers context-on-load sizes, and says LM Studio has the final say', async () => {
     if ((await count('#model-menu:not(.hidden)')) === 0) {
       assert.ok(await click('#model-btn'), 'model button should be clickable');
       await waitFor('#model-menu:not(.hidden)', (n) => n === 1, 10_000);
     }
-    // The reasoning-effort control shares the .ctx-preset class and must stay.
-    await waitFor('#effort-presets .effort-dot', (n) => n > 0, 10_000);
-    assert.strictEqual(await count('#ctx-presets'), 0, 'the context-size picker should be gone');
-    assert.strictEqual(await count('#ctx-note'), 0, 'and with it the mismatch note');
-    assert.strictEqual(await count('#ctx-presets .ctx-preset'), 0);
+    // The picker sets the size we ASK for (minContextLength → `lms load -c`);
+    // it does not claim to be the window in force — that's the meter's job.
+    await waitFor('#ctx-presets .ctx-preset', (n) => n > 0, 10_000);
+    assert.strictEqual(await count('#ctx-presets .ctx-preset.active'), 1, 'one size is current');
+    const note = (await text('#ctx-note')) ?? '';
+    assert.match(note, /final say/, `the note must not promise the size will stick: ${note}`);
   });
 
   it('the model pill reports the window LM Studio actually holds', async () => {

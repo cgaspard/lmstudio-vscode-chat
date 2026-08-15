@@ -338,6 +338,11 @@ function build(): void {
         <button id="model-refresh" class="icon-btn" title="Rescan models">${icon.refresh}</button>
       </div>
       <div id="model-menu-list" class="model-menu-list"></div>
+      <div class="model-menu-foot" id="ctx-foot">
+        <span class="ctx-foot-label">Context on load</span>
+        <div id="ctx-presets" class="ctx-presets"></div>
+        <span class="effort-note" id="ctx-note"></span>
+      </div>
     </div>
     <div id="behavior-menu" class="model-menu hidden">
       <div class="menu-inline">
@@ -1747,6 +1752,9 @@ function renderModels(): void {
   const dot = modelBtn.querySelector('.model-dot') as HTMLElement;
   const label = modelBtn.querySelector('.model-btn-label') as HTMLElement;
   dot.classList.toggle('loaded', !!cur?.loaded);
+  // Three states on the composer chip: dim (nothing chosen), white (chosen but
+  // not resident), green (loaded and ready to serve).
+  dot.classList.toggle('selected', !!cur && !cur.loaded);
   if (cur) {
     const ctx = cur.contextLength ? ` · ${formatTokens(cur.contextLength)}` : '';
     label.textContent = cur.name + ctx;
@@ -1755,6 +1763,7 @@ function renderModels(): void {
   }
   if (!modelMenu.classList.contains('hidden')) {
     renderModelMenu();
+    renderCtxPresets();
   }
 }
 
@@ -1830,6 +1839,53 @@ function renderModelMenu(): void {
   renderEffortPresets();
 }
 
+/**
+ * "Context on load" presets. LM Studio has the final say — some builds load
+ * every model at its maximum regardless of the requested size — so this sets
+ * the size we ASK for (lmstudioCode.minContextLength, used by ensureContext's
+ * `lms load -c`), and the note reports what the loaded model actually holds.
+ */
+const CTX_PRESETS = [16384, 32768, 65536, 131072];
+
+function renderCtxPresets(): void {
+  const el = document.getElementById('ctx-presets');
+  const note = document.getElementById('ctx-note');
+  if (!el) {
+    return;
+  }
+  const cur = state.models.find((m) => m.id === state.currentModel);
+  const max = cur?.maxContextLength || 0;
+  const values = CTX_PRESETS.filter((v) => !max || v < max).concat(max ? [max] : []);
+  el.innerHTML = '';
+  for (const v of values) {
+    const b = document.createElement('button');
+    const isMax = !!max && v === max;
+    b.className = 'ctx-preset' + (v === state.minContext ? ' active' : '');
+    b.dataset.tokens = String(v);
+    b.textContent = isMax ? `Max (${formatTokens(v)})` : formatTokens(v);
+    b.title = `Ask LM Studio to load with ${formatTokens(v)} of context`;
+    b.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (v === state.minContext) {
+        return;
+      }
+      state.minContext = v;
+      post({ type: 'setMinContext', tokens: v });
+      renderCtxPresets();
+      renderMeter();
+    });
+    el.appendChild(b);
+  }
+  if (note) {
+    const loaded = cur?.loaded ? cur.contextLength || 0 : 0;
+    note.textContent = !cur
+      ? 'Applies when a model is loaded for you.'
+      : loaded && loaded !== state.minContext
+        ? `${cur.name} is loaded at ${formatTokens(loaded)} — LM Studio has the final say; this size applies on the next load.`
+        : 'Applies on the next load — LM Studio has the final say on the window it grants.';
+  }
+}
+
 function toggleModelMenu(): void {
   if (modelMenu.classList.contains('hidden')) {
     openModelMenu();
@@ -1847,6 +1903,7 @@ function openModelMenu(): void {
   }
   renderServerMenu();
   renderModelMenu();
+  renderCtxPresets();
   modelMenu.classList.remove('hidden');
   // Anchor above the model button, opening upward.
   const r = modelBtn.getBoundingClientRect();
@@ -2120,9 +2177,56 @@ function toggleWelcome(): void {
   welcomeEl.style.display = hasContent ? 'none' : 'flex';
 }
 
+// ---------------------------------------------------------------------------
+// Turn timestamps — every finished turn is stamped, long pauses get a divider.
+// ---------------------------------------------------------------------------
+let lastMsgStamp = 0; // epoch ms of the most recent message, for gap dividers
+/** Set by renderConversation so loaded history stamps with real times. */
+let msgTimeHint = 0;
+const GAP_DIVIDER_MS = 15 * 60 * 1000;
+
+function fmtStamp(ms: number): string {
+  const age = Date.now() - ms;
+  if (age < 60_000) {
+    return 'just now';
+  }
+  if (age < 3_600_000) {
+    return `${Math.floor(age / 60_000)}m ago`;
+  }
+  const d = new Date(ms);
+  const time = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  return d.toDateString() === new Date().toDateString()
+    ? time
+    : `${d.toLocaleDateString([], { month: 'short', day: 'numeric' })} ${time}`;
+}
+
+function stampSpan(ms: number): string {
+  return `<span class="gen-time" data-ts="${ms}" title="${new Date(ms).toLocaleString()}">${fmtStamp(ms)}</span>`;
+}
+
+/** Keep relative stamps honest without re-rendering anything else. */
+setInterval(() => {
+  document.querySelectorAll('.gen-time[data-ts]').forEach((n) => {
+    n.textContent = fmtStamp(Number((n as HTMLElement).dataset.ts));
+  });
+}, 30_000);
+
+function maybeInsertTimeDivider(ms: number): void {
+  if (lastMsgStamp > 0 && ms - lastMsgStamp > GAP_DIVIDER_MS) {
+    const div = document.createElement('div');
+    div.className = 'time-divider';
+    div.textContent = new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    messagesEl.appendChild(div);
+  }
+  lastMsgStamp = ms;
+}
+
 function ensureMessageEl(messageID: string, role: string): { partsEl: HTMLElement } {
   let entry = messageEls.get(messageID);
   if (!entry) {
+    if (role === 'user') {
+      maybeInsertTimeDivider(msgTimeHint || Date.now());
+    }
     const el = document.createElement('div');
     el.className = `msg ${role === 'user' ? 'user' : 'assistant'}`;
     const partsEl = document.createElement('div');
@@ -2378,24 +2482,38 @@ function renderTool(el: HTMLElement, part: { tool: string; state: any }, partId:
   const collapsed = toolCollapsed.get(partId) ?? true;
   el.dataset.status = status;
 
+  // What's inside decides the affordance: a diff for edits, output lines for
+  // commands, the raw input otherwise. No payload → no caret, no hint — the
+  // line doesn't advertise a click that does nothing.
+  const output = status === 'error' ? st.error : st.output;
+  const diff = buildEditDiff(part.tool, st);
+  const payloadHint = diff
+    ? `<span class="tool-hint diffchip"><span class="add">+${diff.added}</span> <span class="del">−${diff.removed}</span></span>`
+    : output
+      ? `<span class="tool-hint">${String(output).trim().split('\n').length} lines</span>`
+      : !filePath && Object.keys(input).length
+        ? `<span class="tool-hint">input</span>`
+        : '';
+  const expandable = !!(diff || output || filePath || (!filePath && Object.keys(input).length));
+
   el.innerHTML = `
-    <div class="tool-card status-${status}${collapsed ? ' collapsed' : ''}">
-      <button class="tool-head" type="button">
-        <span class="tool-chev"></span>
-        <span class="tool-ico">${icon.tool}</span>
-        <span class="tool-name">${escapeHtml(part.tool)}</span>
-        <span class="tool-title">${escapeHtml(title)}</span>
-        <span class="tool-status">${statusIcon}</span>
-      </button>
-      <div class="tool-body"></div>
-    </div>`;
-  const card = el.querySelector('.tool-card') as HTMLElement;
-  const body = el.querySelector('.tool-body') as HTMLElement;
-  (el.querySelector('.tool-head') as HTMLElement).addEventListener('click', () => {
-    const next = !card.classList.contains('collapsed');
-    card.classList.toggle('collapsed', next);
-    toolCollapsed.set(partId, next);
-  });
+    <button class="tool-line status-${status}${collapsed ? ' collapsed' : ''}${expandable ? '' : ' inert'}" type="button">
+      <span class="tool-chev">${expandable ? icon.caret : ''}</span>
+      <span class="tool-name">${escapeHtml(part.tool)}</span>
+      <span class="tool-title">${escapeHtml(title)}</span>
+      ${payloadHint}
+      <span class="tool-status">${statusIcon}</span>
+    </button>
+    <div class="tool-detail"></div>`;
+  const line = el.querySelector('.tool-line') as HTMLElement;
+  const body = el.querySelector('.tool-detail') as HTMLElement;
+  if (expandable) {
+    line.addEventListener('click', () => {
+      const next = !line.classList.contains('collapsed');
+      line.classList.toggle('collapsed', next);
+      toolCollapsed.set(partId, next);
+    });
+  }
 
   if (filePath) {
     const fileRow = document.createElement('button');
@@ -2404,18 +2522,92 @@ function renderTool(el: HTMLElement, part: { tool: string; state: any }, partId:
     fileRow.addEventListener('click', () => post({ type: 'openFile', path: String(filePath) }));
     body.appendChild(fileRow);
   }
-  const output = status === 'error' ? st.error : st.output;
+  if (diff) {
+    body.appendChild(diff.el);
+  }
   if (output) {
     const pre = document.createElement('pre');
     pre.className = 'tool-output';
     pre.textContent = String(output).slice(0, 8000);
     body.appendChild(pre);
-  } else if (!filePath && Object.keys(input).length) {
+  } else if (!diff && !filePath && Object.keys(input).length) {
     const pre = document.createElement('pre');
     pre.className = 'tool-output dim';
     pre.textContent = JSON.stringify(input, null, 2).slice(0, 1500);
     body.appendChild(pre);
   }
+}
+
+/**
+ * Build the collapsed-by-default diff for an edit/write tool call. Prefers the
+ * unified diff OpenCode attaches to the part metadata; falls back to a plain
+ * removed/added rendering from the tool input. Returns null when the part
+ * carries nothing diffable.
+ */
+function buildEditDiff(
+  tool: string,
+  st: any,
+): { el: HTMLElement; added: number; removed: number } | null {
+  if (tool !== 'edit' && tool !== 'write') {
+    return null;
+  }
+  const input = st.input ?? {};
+  const metaDiff: string | undefined = st.metadata?.diff;
+  const MAX_LINES = 400;
+  const el = document.createElement('pre');
+  el.className = 'tool-diff';
+  let added = 0;
+  let removed = 0;
+  const append = (text: string, cls: string) => {
+    const span = document.createElement('span');
+    span.className = cls;
+    span.textContent = text;
+    el.appendChild(span);
+  };
+  if (metaDiff) {
+    const lines = String(metaDiff).split('\n');
+    for (const [i, lineText] of lines.entries()) {
+      if (i >= MAX_LINES) {
+        append(`… ${lines.length - MAX_LINES} more lines`, 'dl-ctx dim');
+        break;
+      }
+      // File headers (---/+++) are noise here — the row already names the file.
+      if (lineText.startsWith('+++') || lineText.startsWith('---')) {
+        continue;
+      }
+      if (lineText.startsWith('+')) {
+        added++;
+        append(lineText + '\n', 'dl-add');
+      } else if (lineText.startsWith('-')) {
+        removed++;
+        append(lineText + '\n', 'dl-del');
+      } else if (lineText.startsWith('@@')) {
+        append(lineText + '\n', 'dl-hunk');
+      } else {
+        append(lineText + '\n', 'dl-ctx');
+      }
+    }
+    return added || removed ? { el, added, removed } : null;
+  }
+  const oldStr = typeof input.oldString === 'string' ? input.oldString : '';
+  const newStr =
+    typeof input.newString === 'string'
+      ? input.newString
+      : tool === 'write' && typeof input.content === 'string'
+        ? input.content
+        : '';
+  if (!oldStr && !newStr) {
+    return null;
+  }
+  for (const lineText of oldStr ? oldStr.split('\n').slice(0, MAX_LINES / 2) : []) {
+    removed++;
+    append('- ' + lineText + '\n', 'dl-del');
+  }
+  for (const lineText of newStr ? newStr.split('\n').slice(0, MAX_LINES / 2) : []) {
+    added++;
+    append('+ ' + lineText + '\n', 'dl-add');
+  }
+  return { el, added, removed };
 }
 
 // ---------------------------------------------------------------------------
@@ -2857,7 +3049,7 @@ function appendGenStat(): void {
   }
   const el = document.createElement('div');
   el.className = 'gen-stat';
-  el.textContent = formatRate(rate);
+  el.innerHTML = `${escapeHtml(formatRate(rate))} · ${stampSpan(Date.now())}`;
   // The trimmed line keeps four fields; agent, grand total and the thinking
   // share move here so the detail is one hover away rather than always-on.
   el.title =
@@ -3045,9 +3237,25 @@ function renderConversation(messages: MessageWithParts[]): void {
       }
       continue; // summarizer-internal turn — not chat
     }
+    const times = (m.info as any).time ?? {};
+    msgTimeHint = Number(times.created) || 0;
     ensureMessageEl(m.info.id, m.info.role);
+    msgTimeHint = 0;
     for (const part of m.parts) {
       upsertPart(part);
+    }
+    // Loaded turns have no live rate data, but they do have completion times —
+    // stamp them so history reads on a timeline.
+    const completed = Number(times.completed) || 0;
+    if (m.info.role === 'assistant' && completed > 0) {
+      const entry = messageEls.get(m.info.id);
+      if (entry && !entry.el.querySelector('.gen-stat')) {
+        const stamp = document.createElement('div');
+        stamp.className = 'gen-stat';
+        stamp.innerHTML = stampSpan(completed);
+        entry.el.appendChild(stamp);
+      }
+      lastMsgStamp = Math.max(lastMsgStamp, completed);
     }
     if (m.info.role === 'assistant' && (m.info as any).tokens) {
       const u = tokensUsed((m.info as any).tokens);
@@ -3180,6 +3388,7 @@ window.addEventListener('message', (e: MessageEvent<HostToWebview>) => {
       state.lmStudioConnected = msg.lmStudioConnected;
       state.lmStudioAuthRequired = !!msg.lmStudioAuthRequired;
       state.minContext = msg.minContext;
+      renderCtxPresets();
       state.defaultEffort = msg.defaultEffort ?? 'auto';
       state.permissionMode = msg.permissionMode ?? 'default';
       state.agents = msg.agents ?? [];

@@ -1126,8 +1126,17 @@ body {
   background: var(--vscode-descriptionForeground);
   opacity: 0.5;
 }
-.model-dot.loaded {
+/* Selected but not loaded — the model you'd use, not yet resident. Only the
+   composer chip gets this; menu rows stay dim so the list isn't a wall of
+   white. */
+.model-dot.selected {
   background: var(--vscode-foreground);
+  opacity: 1;
+}
+/* Loaded and ready. The one green in the UI: it carries a state nothing else
+   shows, the way red carries failure. */
+.model-dot.loaded {
+  background: var(--vscode-testing-iconPassed, #4ec07a);
   opacity: 1;
 }
 
@@ -2387,4 +2396,162 @@ body.compacting .send-btn {
    .model-menu-foot class in the v2 layout, so it needs its own hidden rule. */
 #effort-foot.hidden {
   display: none;
+}
+
+/* ---- Output area: quiet tool lines (Option A) ------------------------------ */
+/* A completed call is one line — no box, no fill. The caret and the payload
+   hint appear only when there is something to expand, so the affordance never
+   promises a click that does nothing. */
+.tool-line {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  padding: 2px 6px;
+  margin: 0 -6px;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  outline: none;
+}
+.tool-line:hover {
+  background: var(--vscode-list-hoverBackground, rgba(128, 128, 128, 0.10));
+}
+.tool-line.inert {
+  cursor: default;
+}
+.tool-line.inert:hover {
+  background: transparent;
+}
+.tool-line:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder, var(--accent));
+  outline-offset: -1px;
+}
+.tool-line .tool-chev {
+  flex: 0 0 auto;
+  width: 10px;
+  height: 10px;
+  border: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--vscode-descriptionForeground);
+  opacity: 0.7;
+  transform: rotate(-90deg); /* caret icon points down; collapsed points right */
+  transition: transform 0.12s ease, opacity 0.12s ease;
+}
+.tool-line:hover .tool-chev {
+  opacity: 1;
+}
+.tool-line:not(.collapsed) .tool-chev {
+  transform: rotate(0deg);
+}
+.tool-line .tool-name {
+  font-weight: 600;
+  flex: 0 0 auto;
+}
+.tool-line .tool-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--vscode-descriptionForeground);
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 11.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Payload hint: says what is inside before you open it. */
+.tool-hint {
+  flex: 0 0 auto;
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 10.5px;
+  color: var(--vscode-descriptionForeground);
+  opacity: 0.75;
+}
+.tool-line:hover .tool-hint {
+  opacity: 1;
+}
+.diffchip .add {
+  color: var(--vscode-gitDecoration-addedResourceForeground, #7cbf8e);
+}
+.diffchip .del {
+  color: var(--vscode-gitDecoration-deletedResourceForeground, #d98a93);
+}
+.tool-line .tool-status {
+  flex: 0 0 auto;
+  color: var(--vscode-descriptionForeground);
+}
+.tool-line.status-error .tool-status {
+  color: var(--vscode-errorForeground, #e35d6a);
+}
+.tool-line.collapsed + .tool-detail {
+  display: none;
+}
+.tool-detail {
+  padding: 4px 0 2px 17px;
+}
+
+/* Edit diffs — collapsed by default, opened from the line above. */
+.tool-diff {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--vscode-textCodeBlock-background, rgba(128, 128, 128, 0.10));
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 11px;
+  line-height: 1.5;
+  overflow-x: auto;
+  white-space: pre;
+  color: var(--vscode-descriptionForeground);
+}
+.tool-diff .dl-add {
+  display: block;
+  background: var(--vscode-diffEditor-insertedLineBackground, rgba(90, 160, 110, 0.16));
+  color: var(--vscode-foreground);
+}
+.tool-diff .dl-del {
+  display: block;
+  background: var(--vscode-diffEditor-removedLineBackground, rgba(200, 90, 100, 0.14));
+  color: var(--vscode-foreground);
+}
+.tool-diff .dl-hunk {
+  display: block;
+  color: var(--vscode-descriptionForeground);
+  opacity: 0.7;
+}
+.tool-diff .dl-ctx {
+  display: block;
+}
+.tool-diff .dim {
+  opacity: 0.6;
+}
+
+/* ---- Turn timestamps + time-gap dividers ---------------------------------- */
+.gen-time {
+  color: var(--vscode-descriptionForeground);
+  font-variant-numeric: tabular-nums;
+  cursor: default;
+}
+.time-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 4px 0;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: var(--vscode-descriptionForeground);
+  opacity: 0.75;
+  font-variant-numeric: tabular-nums;
+}
+.time-divider::before,
+.time-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--vscode-panel-border, rgba(128, 128, 128, 0.22));
 }
