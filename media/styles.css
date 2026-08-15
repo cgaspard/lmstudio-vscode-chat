@@ -2233,3 +2233,11 @@ body.compacting .send-btn {
   max-height: min(70vh, 520px);
   overflow-y: auto;
 }
+
+/* Hidden-state rules for the Option 4 components (this stylesheet defines
+   .hidden per component, not globally — without these the toggles are inert). */
+.spinner.hidden,
+.server-add.hidden,
+.menu-row.hidden {
+  display: none;
+}
