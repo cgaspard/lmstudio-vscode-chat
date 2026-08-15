@@ -891,21 +891,18 @@ body {
 /* Sits in the composer row beside the buttons — it used to be absolutely
    positioned over the textarea, where it covered the tail of the first line. */
 .ctx-label {
-  flex: 0 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  /* The card's top line, right-aligned — where the old meter row put it. In
+     flow rather than overlaid, so it can never sit on top of typed text. */
+  display: block;
+  text-align: right;
+  padding: 0 2px 4px;
   font-size: 10.5px;
   color: var(--vscode-descriptionForeground);
   font-variant-numeric: tabular-nums;
-  opacity: 0;
-  transition: opacity 0.15s ease;
-  pointer-events: none;
+  cursor: default;
 }
-.composer-box:hover .ctx-label,
-.composer-box.ctx-announce .ctx-label {
-  opacity: 1;
+.ctx-label:empty {
+  display: none;
 }
 .composer-box.ctx-warn .ctx-label {
   color: var(--vscode-editorWarning-foreground, #d7a23b);

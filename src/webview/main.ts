@@ -295,6 +295,7 @@ function build(): void {
       </div>
       <div class="composer-box">
         <div id="ctx-meter" class="ctx-edge" title="Context window usage"><div class="ctx-fill"></div></div>
+        <span class="ctx-label" id="ctx-tip"></span>
         <div id="slash-menu" class="slash-menu hidden"></div>
         <div id="attachments" class="attachments hidden">
           <div id="thumbs" class="thumbs"></div>
@@ -304,7 +305,6 @@ function build(): void {
           <div class="composer-tools">
             <button id="btn-add" class="tool-pill icon-only" title="Add context — attach an image, include the open file">${icon.plus}</button>
             <button id="btn-help" class="tool-pill icon-only" title="Slash commands — everything you can type">${icon.help}</button>
-            <span class="ctx-label" id="ctx-tip"></span>
           </div>
           <div class="composer-right">
             <button id="model-btn" class="model-btn" title="Model &amp; server — switch, load / eject">
