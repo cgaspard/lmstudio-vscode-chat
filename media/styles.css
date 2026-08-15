@@ -2555,3 +2555,17 @@ body.compacting .send-btn {
   height: 1px;
   background: var(--vscode-panel-border, rgba(128, 128, 128, 0.22));
 }
+
+/* Per-row timestamp at the right edge: when this call happened. */
+.tool-time {
+  flex: 0 0 auto;
+  min-width: 52px;
+  text-align: right;
+  font-size: 10.5px;
+  color: var(--vscode-descriptionForeground);
+  opacity: 0.65;
+  font-variant-numeric: tabular-nums;
+}
+.tool-line:hover .tool-time {
+  opacity: 1;
+}

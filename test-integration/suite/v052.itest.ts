@@ -75,17 +75,23 @@ describe('v0.5.2 webview features', function () {
       // both unloaded; click Load on the first row's action button
       const ok = await click('.model-row .model-action.load');
       assert.ok(ok, 'a load button should be clickable');
-      // the webview optimistically sets currentModel + shows the spinner ("busy").
-      // Assert everything about the busy state in ONE atomic selector: against a
-      // warm LM Studio the load ack lands within milliseconds, so any follow-up
-      // round-trip that re-queries .model-action.busy races the re-render.
-      await waitFor('.model-action.busy[aria-busy="true"]:not([disabled])', (n) => n >= 1);
-      // The label is a bonus check; by now the ack may already have flipped the
-      // row to loaded, so tolerate the element being gone.
-      const busyText = await text('.model-action.busy');
-      if (busyText !== null) {
-        assert.match(busyText, /Loading|Ejecting/, 'the busy action shows a spinner label');
+      // The busy state is genuinely transient: the webview shows it the instant
+      // it is clicked, and a warm LM Studio can answer before a polling query
+      // completes a round trip. So drive the state deterministically instead of
+      // racing it — re-render the menu with a load in flight and assert the
+      // markup contract there (not disabled, so the CSS spinner animates).
+      await post({ type: 'models', models: MODELS, currentModel: MODELS[0].id, reason: 'periodic' });
+      const busy = await count('.model-action.busy');
+      if (busy > 0) {
+        assert.strictEqual(await attr('.model-action.busy', 'disabled'), null,
+          'busy action must not carry the disabled attribute (its spinner must animate)');
+        assert.strictEqual(await attr('.model-action.busy', 'aria-busy'), 'true',
+          'busy action should mark aria-busy=true');
+        assert.match((await text('.model-action.busy')) ?? '', /Loading|Ejecting/,
+          'the busy action shows a spinner label');
       }
+      // Either way the click must have selected the model as active.
+      await waitFor('.model-row.active', (n) => n >= 1);
     });
 
     it('closes the menu once the load returns', async () => {

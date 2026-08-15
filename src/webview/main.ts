@@ -2168,6 +2168,8 @@ function clearConversation(): void {
   state.realTokens = 0;
   state.compacted = false;
   lastErrorText = '';
+  lastMsgStamp = 0; // fresh conversation — no gap to measure against
+  firstSeen.clear();
   autoScrollEnabled = true; // fresh conversation starts pinned to the bottom
   toggleWelcome();
 }
@@ -2210,6 +2212,17 @@ setInterval(() => {
     n.textContent = fmtStamp(Number((n as HTMLElement).dataset.ts));
   });
 }, 30_000);
+
+/** Stable timestamp for parts whose state carries no clock of its own. */
+const firstSeen = new Map<string, number>();
+function firstSeenTime(partId: string): number {
+  let t = firstSeen.get(partId);
+  if (!t) {
+    t = Date.now();
+    firstSeen.set(partId, t);
+  }
+  return t;
+}
 
 function maybeInsertTimeDivider(ms: number): void {
   if (lastMsgStamp > 0 && ms - lastMsgStamp > GAP_DIVIDER_MS) {
@@ -2482,27 +2495,31 @@ function renderTool(el: HTMLElement, part: { tool: string; state: any }, partId:
   const collapsed = toolCollapsed.get(partId) ?? true;
   el.dataset.status = status;
 
-  // What's inside decides the affordance: a diff for edits, output lines for
-  // commands, the raw input otherwise. No payload → no caret, no hint — the
-  // line doesn't advertise a click that does nothing.
+  // The caret alone carries the affordance: no payload → no caret, no click.
   const output = status === 'error' ? st.error : st.output;
   const diff = buildEditDiff(part.tool, st);
-  const payloadHint = diff
-    ? `<span class="tool-hint diffchip"><span class="add">+${diff.added}</span> <span class="del">−${diff.removed}</span></span>`
-    : output
-      ? `<span class="tool-hint">${String(output).trim().split('\n').length} lines</span>`
-      : !filePath && Object.keys(input).length
-        ? `<span class="tool-hint">input</span>`
-        : '';
   const expandable = !!(diff || output || filePath || (!filePath && Object.keys(input).length));
+  // Edits keep their +N −M — it is the one hint that says something the row
+  // otherwise can't. Everything else drops the payload chatter.
+  const diffChip = diff
+    ? `<span class="tool-hint diffchip"><span class="add">+${diff.added}</span> <span class="del">−${diff.removed}</span></span>`
+    : '';
+  // Right edge: when this call happened. Prefer the tool's own clock, fall
+  // back to first-seen so a part missing timings still dates itself and
+  // doesn't drift on re-render.
+  const partTime = st.time?.end ?? st.time?.start ?? firstSeenTime(partId);
+  const timeCell = status === 'running' || status === 'pending'
+    ? '<span class="tool-time running"></span>'
+    : `<span class="tool-time">${stampSpan(partTime)}</span>`;
 
   el.innerHTML = `
     <button class="tool-line status-${status}${collapsed ? ' collapsed' : ''}${expandable ? '' : ' inert'}" type="button">
       <span class="tool-chev">${expandable ? icon.caret : ''}</span>
       <span class="tool-name">${escapeHtml(part.tool)}</span>
       <span class="tool-title">${escapeHtml(title)}</span>
-      ${payloadHint}
+      ${diffChip}
       <span class="tool-status">${statusIcon}</span>
+      ${timeCell}
     </button>
     <div class="tool-detail"></div>`;
   const line = el.querySelector('.tool-line') as HTMLElement;
