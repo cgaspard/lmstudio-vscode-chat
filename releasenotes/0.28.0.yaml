@@ -1,0 +1,28 @@
+version: 0.28.0
+date: 2026-08-15
+highlights:
+  - The composer is quieter. Nine controls became four — a + for context, a model chip, a permissions chip, and send — with everything else one click away in two combined menus instead of scattered across the row.
+  - Permission modes now read Auto, Manual and Bypass, and the mode rides the composer chip itself so a Bypass session is never quiet about it.
+  - Tool calls in the conversation are single quiet lines instead of boxes, each stamped with when it ran, and file edits show a real diff you can open.
+added:
+  - A combined model menu. Servers and models live in one popover — pick a server at the top, its models refresh below it, and the menu stays open while you switch.
+  - A behavior menu behind the composer chip, holding agent, thinking and permissions as three sections. Agents are chips, thinking is a slider with the level in its label, and the old alt-click "show reasoning" toggle is finally a visible row.
+  - Collapsed-by-default edit diffs. Edit and write calls show a +N -M chip on their row; click to open the actual diff, colored with your editor's own diff palette.
+  - Timestamps throughout the conversation. Every tool call carries when it ran, every finished turn carries when it completed, and pauses longer than fifteen minutes get a quiet divider — so a long session reads as history. Reopening an old chat dates every turn from its real completion time.
+  - A ? button next to + that prints the slash-command list, now a grouped panel (built-in, from OpenCode, skills) instead of a wall of text.
+  - Context on load is a visible control again. The model menu has a size picker that grows the current model immediately rather than waiting for the next load — with a note that LM Studio has the final say, because some builds ignore the requested size.
+  - An add-context menu on the + button, listing everything extra that will be sent — attached images, the open file, and the editor selection that used to be attached invisibly.
+changed:
+  - One accent color, used for two things. The theme accent now paints only the send button and the focused input border; status dots, progress fills, active pills and the spinner went monochrome, so the accent means something again.
+  - Semantic colors collapsed to one each. Three different yellows became one warning color, two reds became one error color, and green is now reserved for a single meaning — a model loaded and ready to serve.
+  - The model dot has three states — dim for nothing chosen, white for chosen but not loaded, green for loaded and ready.
+  - The status line and the Working indicator merged into one activity strip, so a running turn no longer stacks two rows above the input.
+  - The context meter became a 2px edge on the composer itself. It stays ambient below 70% and announces itself with a label and warning color above it.
+  - The per-turn stat line trimmed to four fields; the agent name, grand total and thinking share moved to its tooltip. Both it and the context meter now use the same 1024-base formatting, so one token count no longer renders as two different numbers.
+  - Reasoning blocks restored from a saved conversation open collapsed and labelled with how long the model thought, instead of expanded and still saying "Thinking...".
+fixed:
+  - The permissions picker used to be the first control to vanish into the overflow menu on a narrow panel, hiding the one setting that most deserves to stay visible. There is no overflow menu now, and the mode rides the chip.
+  - Popover shadows, selection highlights and badge backgrounds used hardcoded fallbacks that ignored the active theme; they now follow theme tokens and behave in light themes.
+  - Only the last message of a turn had its reasoning collapsed, so earlier blocks in a multi-step turn stayed open forever.
+removed:
+  - The composer overflow menu, along with the server pill, paperclip, thinking pill, goal button and the two dropdown pickers it used to swallow. Every one of those actions still exists — in the two menus or as a slash command.
