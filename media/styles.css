@@ -180,6 +180,11 @@ body {
 .msg {
   display: flex;
   flex-direction: column;
+  /* A flex item defaults to min-width:auto, i.e. it refuses to shrink below its
+     widest descendant — so one long code block or diff line stretched the whole
+     message column and put a horizontal scrollbar on the entire panel. Pinning
+     the chain to 0 lets the wide boxes scroll inside themselves instead. */
+  min-width: 0;
 }
 /* user turn: full-width subtle card (Claude-style) */
 .msg.user .parts {
@@ -2551,4 +2556,24 @@ body.compacting .send-btn {
 }
 .tool-detail {
   margin-top: 2px;
+}
+
+/* Keep the whole part chain shrinkable: any one of these defaulting to
+   min-width:auto is enough to blow the panel out horizontally. */
+.messages,
+.msg > .parts,
+.msg.user .parts,
+.parts > .part,
+.tool-detail,
+.tool-detail > *,
+.part pre,
+.tool-output,
+.tool-diff {
+  min-width: 0;
+}
+/* Long unbroken tokens (paths, URLs, base64) wrap instead of widening the row. */
+.tool-line .tool-title,
+.help-row code,
+.help-hint {
+  overflow-wrap: anywhere;
 }

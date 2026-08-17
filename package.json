@@ -1,8 +1,8 @@
 {
   "name": "lmstudio-code",
   "displayName": "LM Studio Code",
-  "description": "Agentic coding panel for your local LM Studio models. A Claude Code / Codex\u2013style chat experience powered by the open-source OpenCode agent, running entirely against your local models.",
-  "version": "0.28.2",
+  "description": "Agentic coding panel for your local LM Studio models. A Claude Code / Codex–style chat experience powered by the open-source OpenCode agent, running entirely against your local models.",
+  "version": "0.28.3",
   "publisher": "cgaspard",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -128,7 +128,7 @@
         "lmstudioCode.agent": {
           "type": "string",
           "default": "build",
-          "description": "Agent to select by default. 'build' edits your code; 'plan' is read-only. Any agent you define in .opencode/agent/*.md (or ~/.config/opencode/agent/) can also be named here \u2014 it appears in the picker after the OpenCode server restarts."
+          "description": "Agent to select by default. 'build' edits your code; 'plan' is read-only. Any agent you define in .opencode/agent/*.md (or ~/.config/opencode/agent/) can also be named here — it appears in the picker after the OpenCode server restarts."
         },
         "lmstudioCode.autoEnsureContext": {
           "type": "boolean",
@@ -189,7 +189,7 @@
         "lmstudioCode.mcpServers": {
           "type": "object",
           "default": {},
-          "markdownDescription": "MCP (Model Context Protocol) servers to make available to the agent, as a map of `name \u2192 server`. Each server is either a local (stdio) command or a remote (http/sse) URL.\n\nServers configured for **Claude Code** (`.mcp.json` at the workspace root) and **VS Code Copilot** (`.vscode/mcp.json` and the user `mcp` setting) are also discovered automatically \u2014 use this setting to add servers specific to LM Studio Code, or to override a discovered one. Entries here take precedence on a name collision.\n\nLocal (stdio) example:\n```json\n{\n  \"playwright\": { \"command\": \"npx\", \"args\": [\"-y\", \"@playwright/mcp@latest\"] }\n}\n```\nRemote (http/sse) example:\n```json\n{\n  \"docs\": { \"type\": \"http\", \"url\": \"https://example.com/mcp\", \"headers\": { \"Authorization\": \"Bearer ${MY_TOKEN}\" } }\n}\n```\n`${VAR}` references are resolved from the environment before launch. Set `\"enabled\": false` to keep a server defined but off. Note: each MCP server adds its tool schemas to the model's context, which is limited on local models \u2014 enable only what you need.",
+          "markdownDescription": "MCP (Model Context Protocol) servers to make available to the agent, as a map of `name → server`. Each server is either a local (stdio) command or a remote (http/sse) URL.\n\nServers configured for **Claude Code** (`.mcp.json` at the workspace root) and **VS Code Copilot** (`.vscode/mcp.json` and the user `mcp` setting) are also discovered automatically — use this setting to add servers specific to LM Studio Code, or to override a discovered one. Entries here take precedence on a name collision.\n\nLocal (stdio) example:\n```json\n{\n  \"playwright\": { \"command\": \"npx\", \"args\": [\"-y\", \"@playwright/mcp@latest\"] }\n}\n```\nRemote (http/sse) example:\n```json\n{\n  \"docs\": { \"type\": \"http\", \"url\": \"https://example.com/mcp\", \"headers\": { \"Authorization\": \"Bearer ${MY_TOKEN}\" } }\n}\n```\n`${VAR}` references are resolved from the environment before launch. Set `\"enabled\": false` to keep a server defined but off. Note: each MCP server adds its tool schemas to the model's context, which is limited on local models — enable only what you need.",
           "additionalProperties": {
             "type": "object",
             "properties": {

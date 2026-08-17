@@ -1,0 +1,10 @@
+version: 0.28.3
+date: 2026-08-16
+highlights:
+  - Wide content no longer drags the whole panel sideways — long lines wrap, and diffs and code scroll inside their own box.
+fixed:
+  - One wide diff, code block or long path stretched the entire message column, putting a horizontal scrollbar on the panel and carrying every other message off-screen with it. Message parts can shrink again, so wide content scrolls within itself instead.
+  - Long unbroken tokens — file paths, URLs, base64 — now wrap inside tool rows and the slash-command help rather than widening the row.
+added: []
+changed: []
+removed: []
