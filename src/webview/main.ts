@@ -2547,7 +2547,7 @@ function renderTool(el: HTMLElement, part: { tool: string; state: any }, partId:
     <button class="tool-line status-${escapeHtml(String(status))}${collapsed ? ' collapsed' : ''}${expandable ? '' : ' inert'}" type="button">
       <span class="tool-chev">${expandable ? icon.caret : ''}</span>
       <span class="tool-name">${escapeHtml(part.tool)}</span>
-      <span class="tool-title">${escapeHtml(title)}</span>
+      <span class="tool-title" title="${escapeHtml(title)}">${escapeHtml(title)}</span>
       ${diffChip}
       <span class="tool-status">${statusIcon}</span>
       ${timeCell}
@@ -2563,6 +2563,16 @@ function renderTool(el: HTMLElement, part: { tool: string; state: any }, partId:
     });
   }
 
+  // The row above ellipsizes long commands, so the expansion is where the
+  // full text lives — in a box that scrolls sideways instead of widening
+  // the panel.
+  const command = typeof input.command === 'string' ? input.command : '';
+  if (command) {
+    const pre = document.createElement('pre');
+    pre.className = 'tool-cmd';
+    pre.textContent = command.slice(0, 4000);
+    body.appendChild(pre);
+  }
   if (filePath) {
     const fileRow = document.createElement('button');
     fileRow.className = 'tool-file';
@@ -2578,7 +2588,7 @@ function renderTool(el: HTMLElement, part: { tool: string; state: any }, partId:
     pre.className = 'tool-output';
     pre.textContent = String(output).slice(0, 8000);
     body.appendChild(pre);
-  } else if (!diff && !filePath && Object.keys(input).length) {
+  } else if (!command && !diff && !filePath && Object.keys(input).length) {
     const pre = document.createElement('pre');
     pre.className = 'tool-output dim';
     pre.textContent = JSON.stringify(input, null, 2).slice(0, 1500);

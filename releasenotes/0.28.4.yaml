@@ -1,0 +1,10 @@
+version: 0.28.4
+date: 2026-08-20
+highlights:
+  - Long tool commands now truncate with an ellipsis; expand the row to see the full command in a box that scrolls on its own.
+fixed:
+  - Tool rows are buttons, and buttons size to their content instead of their container — so a long bash command still stretched the row past the panel edge and brought the horizontal scrollbar back. Rows now pin to the panel width and the title ellipsizes like it was always meant to.
+  - Expanding a bash row now shows the complete command above its output, in a scrollable box, so nothing is lost to the ellipsis. Hovering a truncated title also shows the full text as a tooltip.
+added: []
+changed: []
+removed: []

@@ -2377,6 +2377,12 @@ body.compacting .send-btn {
   display: flex;
   align-items: center;
   gap: 7px;
+  /* A button never stretches to fill its block parent — width:auto on form
+     controls is fit-content — so a long command sized this row to its full
+     text and pushed a horizontal scrollbar onto the whole panel. Pin it to
+     the part width (+12px covers the -6px hover-pill bleed on each side) so
+     the title's ellipsis actually engages. */
+  width: calc(100% + 12px);
   padding: 4px 6px;
   margin: 0 -6px;
   background: transparent;
@@ -2471,6 +2477,17 @@ body.compacting .send-btn {
 .tool-detail .tool-file,
 .tool-detail .tool-output {
   border-top: none;
+}
+/* The full command behind an ellipsized bash row. Inherits the `.part pre`
+   box; white-space stays `pre` so a long command scrolls inside this box
+   instead of wrapping or widening the panel. */
+.tool-cmd {
+  margin: 0 0 4px;
+  padding: 7px 9px;
+  max-height: 160px;
+  overflow: auto;
+  font-size: 11.5px;
+  line-height: 1.5;
 }
 
 /* Edit diffs — collapsed by default, opened from the line above. */
