@@ -26,7 +26,7 @@ import { humanizeError, isConnectionError } from '../core/errors';
 import { pickModel } from '../core/models';
 import { type PermissionMode, normalizePermissionMode } from '../core/permission';
 import { ConnectResult, SelfHealer } from '../core/reconnect';
-import { selectionLabel } from '../core/selection';
+import { isContextLive, selectionLabel } from '../core/selection';
 import { resolveApiKeyEdit } from '../core/servers';
 import { emptySessionCandidates } from '../core/sessions';
 import { classifySkills } from '../core/skills';
@@ -135,6 +135,7 @@ export class ChatBridge {
     | null = null;
   private editorSub: vscode.Disposable | undefined;
   private selectionSub: vscode.Disposable | undefined;
+  private tabsSub: vscode.Disposable | undefined;
   private messageSub: vscode.Disposable | undefined;
   private healthTimer: ReturnType<typeof setInterval> | undefined;
   /** Next wall-clock time (ms) the upstream probe is due; 0 = due now. */
@@ -186,10 +187,14 @@ export class ChatBridge {
     this.editorSub = vscode.window.onDidChangeActiveTextEditor((e) => {
       this.updateActiveFile(e);
       this.updateSelection(e);
+      this.pruneClosedContext();
     });
     this.selectionSub = vscode.window.onDidChangeTextEditorSelection((e) =>
       this.updateSelection(e.textEditor),
     );
+    // Closing a tab is the one way context goes stale silently — see
+    // pruneClosedContext.
+    this.tabsSub = vscode.window.tabGroups.onDidChangeTabs(() => this.pruneClosedContext());
     // Self-heal when the shared OpenCode server dies unexpectedly.
     this.serverExitSub = this.deps.server.addExitListener(() => this.onServerExit());
   }
@@ -200,6 +205,7 @@ export class ChatBridge {
     this.eventAbort?.abort();
     this.editorSub?.dispose();
     this.selectionSub?.dispose();
+    this.tabsSub?.dispose();
     this.serverExitSub?.dispose();
     if (this.healthTimer) {
       clearInterval(this.healthTimer);
@@ -335,6 +341,54 @@ export class ChatBridge {
       this.teardownConnection(false);
     }
     return this.healer.reconnect();
+  }
+
+  /**
+   * Absolute paths of every file currently open in the editor — tabs (including
+   * both sides of a diff) plus visible editors. The tab list is what a user
+   * means by "open", so it's what decides whether remembered context survives.
+   */
+  private openFilePaths(): Set<string> {
+    const paths = new Set<string>();
+    const add = (uri: vscode.Uri | undefined): void => {
+      if (uri && uri.scheme === 'file') {
+        paths.add(uri.fsPath);
+      }
+    };
+    for (const group of vscode.window.tabGroups.all) {
+      for (const tab of group.tabs) {
+        const input = tab.input as
+          | { uri?: vscode.Uri; modified?: vscode.Uri; original?: vscode.Uri }
+          | undefined;
+        add(input?.uri);
+        add(input?.modified);
+        add(input?.original);
+      }
+    }
+    for (const editor of vscode.window.visibleTextEditors) {
+      add(editor.document.uri);
+    }
+    return paths;
+  }
+
+  /**
+   * Drop remembered context whose file is no longer open. updateActiveFile and
+   * updateSelection both keep their last value when the active editor goes
+   * undefined (so clicking into the composer doesn't wipe the user's context),
+   * and closing a tab fires neither event for that document — so without this
+   * a closed file stayed pinned forever: a phantom "Include open file" row in
+   * the + menu, and its stale selection silently attached to every message.
+   */
+  private pruneClosedContext(): void {
+    const open = this.openFilePaths();
+    if (this.activeFile && !isContextLive(this.activeFile.abs, open)) {
+      this.activeFile = null;
+      this.post({ type: 'activeFile', path: null, chars: 0 });
+    }
+    if (this.activeSelection && !isContextLive(this.activeSelection.abs, open)) {
+      this.activeSelection = null;
+      this.post({ type: 'activeSelection', selection: null });
+    }
   }
 
   private updateActiveFile(editor: vscode.TextEditor | undefined): void {
@@ -830,6 +884,9 @@ export class ChatBridge {
     void this.sendCommands();
     this.updateActiveFile(vscode.window.activeTextEditor);
     this.updateSelection(vscode.window.activeTextEditor);
+    // A reloaded webview re-runs init with the bridge's remembered context —
+    // drop anything whose file was closed while the panel was away.
+    this.pruneClosedContext();
     this.warnIfAgentsLarge();
     // Clean connect — clear any reconnect backoff held by the healer.
     this.healer.noteConnected();
@@ -1828,6 +1885,9 @@ export class ChatBridge {
     if (!this.currentModel) {
       throw new Error('No LM Studio model selected.');
     }
+    // Last word on what's actually open, so a file closed since the last editor
+    // event can never ride along on the prompt.
+    this.pruneClosedContext();
     // Lazily create the server session on the first message of a fresh chat, so
     // an untouched "New chat" never exists server-side (and never shows in
     // history).

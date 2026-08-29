@@ -18,3 +18,17 @@ export function formatLineRange(startLine: number, endLine: number): string {
 export function selectionLabel(relPath: string, startLine: number, endLine: number): string {
   return `${relPath}#${formatLineRange(startLine, endLine)}`;
 }
+
+/**
+ * Whether remembered editor context (the "open file" and its selection) is
+ * still live, given the absolute paths of everything currently open in the
+ * editor. Closing a tab fires no active-editor or selection change for that
+ * document, so the bridge has to re-check retention against the open set —
+ * otherwise a closed file stays pinned to every later message.
+ *
+ * Pure so the rule is testable without vscode; the bridge supplies `openPaths`
+ * from the tab groups + visible editors.
+ */
+export function isContextLive(abs: string | undefined | null, openPaths: Set<string>): boolean {
+  return !!abs && openPaths.has(abs);
+}

@@ -1,0 +1,10 @@
+version: 0.28.5
+date: 2026-08-29
+highlights:
+  - Closing a file now actually removes it from the chat's context — no more phantom "Include open file" row, and no more stale selection riding along on your next message.
+fixed:
+  - The panel kept the last open file and its selection when the active editor went away, so that clicking into the composer wouldn't wipe your context. But closing a tab fires neither an editor nor a selection change, so a closed file stayed pinned forever — it showed in the + menu and was silently attached to every later prompt. Context is now re-checked against the tabs that are actually open.
+  - A file closed while the panel was hidden is dropped when the panel comes back, and the check runs once more at send time, so a closed file can never be attached to a prompt.
+added: []
+changed: []
+removed: []
