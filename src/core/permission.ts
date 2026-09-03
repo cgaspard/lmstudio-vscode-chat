@@ -5,7 +5,7 @@
  *
  * OpenCode flattens the `permission` object into an ordered rule list where
  * the LAST matching rule wins and key order is preserved (verified against the
- * bundled 1.18.17: `"permission": "allow"` normalizes to `{"*": "allow"}`),
+ * bundled 1.18.26: `"permission": "allow"` normalizes to `{"*": "allow"}`),
  * so the wildcard must come first and per-tool overrides after it.
  */
 

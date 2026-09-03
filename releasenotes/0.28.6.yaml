@@ -1,0 +1,15 @@
+version: 0.28.6
+date: 2026-09-02
+highlights:
+  - The bundled OpenCode server moves from 1.18.17 to 1.18.26 — nine upstream releases of fixes, several of which land squarely on local OpenAI-compatible servers like LM Studio.
+fixed:
+  - OpenCode no longer sends the `textVerbosity` option to OpenAI-compatible servers that don't understand it, which is exactly the shape of request LM Studio serves. Turns that failed on an unsupported-parameter error now go through.
+  - A turn no longer stops early when the model reports a finish reason OpenCode doesn't recognise. Local servers emit non-standard finish reasons fairly often, and the response now continues instead of being cut off mid-answer.
+  - A failed subagent tool call surfaces a resumable task id instead of returning an empty result, so a delegated step that dies is visible and can be picked back up rather than silently producing nothing.
+  - More network failure shapes are retried, including responses that end with a `network_error` finish reason and transient capacity errors, so a blip mid-turn is far less likely to end it.
+  - Malformed model pricing from a server no longer breaks usage-cost calculation for the whole turn — the bad entry is ignored instead.
+  - Tool-call timings stay accurate when a tool updates its own metadata while still running, so the duration on a tool row reflects the real elapsed time.
+  - Reasoning replay is more reliable, and an `apply_patch` no longer writes an empty move path into its permission prompt.
+added: []
+changed: []
+removed: []
