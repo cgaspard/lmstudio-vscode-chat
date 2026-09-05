@@ -2275,13 +2275,46 @@ function mdToHtml(src: string): string {
       }
     }
   });
+  // A code fence with nothing in it yet parses to `<pre><code></code></pre>`,
+  // and `.part pre` paints that as a bordered, padded code box — so it lands as
+  // a stray grey bar with no content. This is not an edge case: EVERY code
+  // block passes through it, because the opening ``` arrives before the body
+  // does, and the bar sits there until the first token of content lands (or
+  // forever, if the model opens a fence it never fills). A code block with
+  // nothing to show is not worth a box.
+  tpl.content.querySelectorAll('pre').forEach((pre) => {
+    if (!(pre.textContent ?? '').trim()) {
+      pre.remove();
+    }
+  });
   return tpl.innerHTML;
+}
+
+/**
+ * Whether rendered markdown will actually draw something.
+ *
+ * Not the same question as "is the source non-blank": a lone opening fence is
+ * three characters of text that render to an empty code block, and after the
+ * strip above to nothing at all. Elements that show without carrying text have to be
+ * counted explicitly or an image-only or rule-only part would vanish.
+ */
+function hasVisibleContent(html: string): boolean {
+  const tpl = document.createElement('template');
+  tpl.innerHTML = html;
+  return (
+    (tpl.content.textContent ?? '').trim().length > 0 ||
+    !!tpl.content.querySelector('img,hr,table,video,audio,svg,input')
+  );
 }
 
 // Render a text or reasoning part from its buffer. Empty parts are hidden so
 // they don't leave a stray timeline dot.
 function renderTextLike(ps: { el: HTMLElement; buffer: string; type: string }): void {
-  const has = ps.buffer.trim().length > 0;
+  // Decide emptiness from what will be DRAWN, not from the source text. A
+  // buffer that is non-blank can still render to nothing — see mdToHtml — and
+  // testing the source let those parts through to draw an empty box.
+  const html = ps.buffer.trim() ? mdToHtml(ps.buffer) : '';
+  const has = hasVisibleContent(html);
   ps.el.style.display = has ? '' : 'none';
   if (!has) {
     ps.el.innerHTML = '';
@@ -2312,7 +2345,7 @@ function renderTextLike(ps: { el: HTMLElement; buffer: string; type: string }): 
       ps.el.dataset.endedAt = String(Date.now());
     }
     ps.el.dataset.chars = String(ps.buffer.length);
-    (ps.el.querySelector('.reasoning-body') as HTMLElement).innerHTML = mdToHtml(ps.buffer);
+    (ps.el.querySelector('.reasoning-body') as HTMLElement).innerHTML = html;
     if (renderingHistory) {
       // No live rate data for history — label from the part's own clock.
       const label = ps.el.querySelector('.reasoning-label') as HTMLElement | null;
@@ -2340,7 +2373,7 @@ function renderTextLike(ps: { el: HTMLElement; buffer: string; type: string }): 
     if (ps.el.dataset.questionRendered) {
       return; // already swapped for a picker — ignore further deltas
     }
-    ps.el.innerHTML = mdToHtml(ps.buffer);
+    ps.el.innerHTML = html;
     enhanceCode(ps.el);
   }
 }
