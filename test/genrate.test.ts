@@ -2,6 +2,10 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
   IDLE_GAP_MS,
+  addTurn,
+  formatDuration,
+  formatTotals,
+  newSessionTotals,
   formatRate,
   formatThinkingLabel,
   newTurnRate,
@@ -156,4 +160,88 @@ test('formatThinkingLabel reads as a duration, and handles minutes', () => {
   assert.equal(formatThinkingLabel(21_060, 776, true), 'Thought for 21.1s · 776 tokens');
   assert.equal(formatThinkingLabel(63_000, 0, true), 'Thought for 1m 03s');
   assert.equal(formatThinkingLabel(5000, 120, false), 'Thought for 5.0s · ~120 tokens');
+});
+
+
+// A turn that streamed 400 chars of thinking and 200 of answer, so the observed
+// split is unambiguous: ~100 reasoning tokens, ~50 answer tokens.
+function thoughtfulTurn() {
+  const r = newTurnRate();
+  recordDelta(r, 'reasoning', 400, 1000);
+  recordDelta(r, 'text', 200, 2000);
+  return r;
+}
+
+// The bug: `output` was taken as the whole story. On a provider that reports
+// thinking SEPARATELY from output, every thinking token vanished from the total
+// and from tok/s — the number even dropped the moment exact usage arrived,
+// because the mid-stream estimate had counted them.
+test('summarize adds reasoning when the provider reports it outside output', () => {
+  const r = thoughtfulTurn();
+  // output ~= the answer alone (50), reasoning reported beside it.
+  recordTokens(r, { input: 900, output: 50, reasoning: 100 });
+  const s = summarize(r)!;
+  assert.equal(s.total, 150, 'thinking is part of what the model generated');
+  assert.equal(s.reasoning, 100);
+});
+
+// The other convention (OpenAI-style): completion_tokens already contains the
+// reasoning tokens, which are restated as a subset. Adding them here would
+// count the thinking twice and overstate tok/s.
+test('summarize does not double count reasoning already inside output', () => {
+  const r = thoughtfulTurn();
+  // output ~= answer + thinking (150), with reasoning restated as a subset.
+  recordTokens(r, { input: 900, output: 150, reasoning: 100 });
+  const s = summarize(r)!;
+  assert.equal(s.total, 150);
+  assert.equal(s.reasoning, 100);
+});
+
+test('summarize leaves output alone when no reasoning is reported', () => {
+  const r = thoughtfulTurn();
+  recordTokens(r, { input: 900, output: 150 });
+  assert.equal(summarize(r)!.total, 150);
+});
+
+// Replayed history streamed nothing past us, so there is no evidence to weigh.
+// Prefer the common convention over inflating the count.
+test('summarize falls back to output when nothing streamed', () => {
+  const r = newTurnRate();
+  recordDelta(r, 'text', 0, 1000); // no-op: keeps chars at zero
+  r.started = true;
+  r.firstDeltaAt = 1000;
+  r.lastDeltaAt = 2000;
+  r.activeMs = 1000;
+  recordTokens(r, { input: 10, output: 150, reasoning: 100 });
+  assert.equal(summarize(r)!.total, 150);
+});
+
+test('session totals accumulate across turns and survive compaction', () => {
+  const t = newSessionTotals();
+  assert.equal(formatTotals(t), null, 'nothing measured yet');
+  const r1 = thoughtfulTurn();
+  recordTokens(r1, { input: 1000, output: 50, reasoning: 100 });
+  addTurn(t, summarize(r1)!);
+  const r2 = thoughtfulTurn();
+  recordTokens(r2, { input: 2000, output: 50, reasoning: 100 });
+  addTurn(t, summarize(r2)!);
+  assert.equal(t.turns, 2);
+  assert.equal(t.input, 3000);
+  assert.equal(t.output, 300, 'both turns counted thinking');
+  assert.equal(t.reasoning, 200);
+  assert.equal(t.exact, true);
+});
+
+test('session totals go approximate once any turn was estimated', () => {
+  const t = newSessionTotals();
+  addTurn(t, summarize(thoughtfulTurn())!); // no exact usage attached
+  assert.equal(t.exact, false);
+  assert.match(formatTotals(t)!, /^~/);
+});
+
+test('formatDuration reads coarsely at every scale', () => {
+  assert.equal(formatDuration(0), '0s');
+  assert.equal(formatDuration(42_000), '42s');
+  assert.equal(formatDuration(1_100_000), '18m 20s');
+  assert.equal(formatDuration(3_840_000), '1h 04m');
 });

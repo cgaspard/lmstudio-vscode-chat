@@ -905,6 +905,12 @@ body {
   color: var(--vscode-descriptionForeground);
   font-variant-numeric: tabular-nums;
   cursor: default;
+  /* Window figure + session spend can outrun a narrow side panel. Truncate on
+     one line rather than wrapping and pushing the composer down as you type —
+     the full breakdown is in the tooltip either way. */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .ctx-label:empty {
   display: none;

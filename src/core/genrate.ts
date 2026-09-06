@@ -148,16 +148,49 @@ export interface RateSummary {
  * Collapse a turn's accounting into a displayable summary, or null when there
  * is nothing measurable (e.g. a tool-only turn that streamed no text).
  *
- * `output` from the provider already includes reasoning tokens, so the total is
- * `output` and the reasoning portion is a subset — not a second addend.
+ * Whether the provider's `output` already includes its reasoning tokens is
+ * decided per turn against what actually streamed — see exactOutput.
  */
+/**
+ * Output tokens for the turn, with thinking counted exactly once.
+ *
+ * Whether a provider's `output` already contains its `reasoning` count is not
+ * something the numbers can tell you on their own. OpenAI-style APIs fold
+ * reasoning into `completion_tokens` and then report it again as a subset;
+ * others report the two side by side. This used to assume the first
+ * unconditionally, which silently dropped every thinking token from the total —
+ * and from tok/s — on any provider that does the second. Assuming the other way
+ * would double-count them instead.
+ *
+ * But we watched the stream, so we do not have to assume. `textChars` and
+ * `reasoningChars` are what actually arrived; whichever reading of `output`
+ * lands closer to the characters we saw is the one the provider meant.
+ */
+function exactOutput(rate: TurnRate): number {
+  const output = rate.tokens!.output!;
+  const reasoning = rate.tokens!.reasoning ?? 0;
+  if (reasoning <= 0) {
+    return output; // nothing to double count
+  }
+  const answerOnly = rate.textChars / CHARS_PER_TOKEN;
+  const withThinking = (rate.textChars + rate.reasoningChars) / CHARS_PER_TOKEN;
+  if (withThinking <= 0) {
+    // Nothing streamed past us — a turn restored from history. Fall back to the
+    // common convention rather than risk inflating the count.
+    return output;
+  }
+  return Math.abs(output - answerOnly) < Math.abs(output - withThinking)
+    ? output + reasoning
+    : output;
+}
+
 export function summarize(rate: TurnRate): RateSummary | null {
   const exact = !!rate.tokens && (rate.tokens.output ?? 0) > 0;
   const reasoning = exact
     ? (rate.tokens!.reasoning ?? 0)
     : Math.round(rate.reasoningChars / CHARS_PER_TOKEN);
   const total = exact
-    ? rate.tokens!.output!
+    ? exactOutput(rate)
     : Math.round((rate.textChars + rate.reasoningChars) / CHARS_PER_TOKEN);
   if (total < 1) {
     return null;
@@ -223,4 +256,74 @@ export function formatThinkingLabel(ms: number, tokens: number, exact: boolean):
     return `Thought for ${time} · ${exact ? '' : '~'}${tokens} tokens`;
   }
   return `Thought for ${time}`;
+}
+
+
+/**
+ * Running totals for the whole session, so the UI can show what a conversation
+ * has cost end to end rather than only what the last turn did.
+ *
+ * Kept separate from the context meter on purpose: the meter shows what is
+ * currently IN the window, which compaction resets and which never counts a
+ * turn twice. These totals only ever go up, and survive compaction — they are
+ * what you actually spent.
+ */
+export interface SessionTotals {
+  /** Assistant turns folded in. */
+  turns: number;
+  /** Prompt tokens across the session. */
+  input: number;
+  /** Output tokens (answer + thinking) across the session. */
+  output: number;
+  /** Thinking tokens, where the provider broke them out. */
+  reasoning: number;
+  /** Active generation time, ms — the same tool-gap-excluding clock as a turn. */
+  activeMs: number;
+  /** False once any turn folded in was a chars/4 estimate. */
+  exact: boolean;
+}
+
+export function newSessionTotals(): SessionTotals {
+  return { turns: 0, input: 0, output: 0, reasoning: 0, activeMs: 0, exact: true };
+}
+
+/** Fold one finished turn into the session totals. */
+export function addTurn(totals: SessionTotals, turn: RateSummary): SessionTotals {
+  totals.turns += 1;
+  totals.input += turn.input;
+  totals.output += turn.total;
+  totals.reasoning += turn.reasoning;
+  totals.activeMs += Math.round(turn.seconds * 1000);
+  if (!turn.exact) {
+    totals.exact = false;
+  }
+  return totals;
+}
+
+/** "1h 04m" / "18m 20s" / "42s" — coarse enough to read at a glance. */
+export function formatDuration(ms: number): string {
+  const s = Math.max(0, Math.round(ms / 1000));
+  if (s >= 3600) {
+    return `${Math.floor(s / 3600)}h ${String(Math.floor((s % 3600) / 60)).padStart(2, '0')}m`;
+  }
+  if (s >= 60) {
+    return `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, '0')}s`;
+  }
+  return `${s}s`;
+}
+
+/**
+ * "412K tokens · 18m 20s" — the session line. Null before anything has been
+ * measured, so the caller can leave the space empty rather than print zeroes.
+ */
+export function formatTotals(totals: SessionTotals): string | null {
+  if (totals.turns < 1) {
+    return null;
+  }
+  const tokens = totals.input + totals.output;
+  if (tokens < 1 && totals.activeMs < 1000) {
+    return null;
+  }
+  const approx = totals.exact ? '' : '~';
+  return `${approx}${compact(tokens)} tokens · ${formatDuration(totals.activeMs)}`;
 }
