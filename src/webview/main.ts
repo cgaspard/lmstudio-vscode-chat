@@ -1907,13 +1907,21 @@ function renderCtxPresets(): void {
   const max = cur?.maxContextLength || 0;
   const values = CTX_PRESETS.filter((v) => !max || v < max).concat(max ? [max] : []);
   el.innerHTML = '';
+  // The window actually in force, when LM Studio granted something other than
+  // what was asked for. Highlighting only the request would state a size that
+  // is not the one running.
+  const loadedNow = cur?.loaded ? cur.contextLength || 0 : 0;
   for (const v of values) {
     const b = document.createElement('button');
     const isMax = !!max && v === max;
-    b.className = 'ctx-preset' + (v === state.minContext ? ' active' : '');
+    const inForce = loadedNow > 0 && v === loadedNow && v !== state.minContext;
+    b.className =
+      'ctx-preset' + (v === state.minContext ? ' active' : '') + (inForce ? ' in-force' : '');
     b.dataset.tokens = String(v);
     b.textContent = isMax ? `Max (${formatTokens(v)})` : formatTokens(v);
-    b.title = `Ask LM Studio to load with ${formatTokens(v)} of context`;
+    b.title = inForce
+      ? `Currently loaded at ${formatTokens(v)} — LM Studio did not grant the ${formatTokens(state.minContext)} requested`
+      : `Ask LM Studio to load with ${formatTokens(v)} of context`;
     b.addEventListener('click', (e) => {
       e.stopPropagation();
       if (v === state.minContext) {

@@ -105,3 +105,42 @@ test('opencodeContextLimit falls back to the clamped setting when not loaded', (
   assert.equal(opencodeContextLimit({ maxContextLength: 32768 }, 131072), 32768); // capped
   assert.equal(opencodeContextLimit({ loadedContextLength: 0, maxContextLength: 8192 }, 0), 8192);
 });
+
+
+// The expensive bug this guards. LM Studio accepts `context_length: 262144`,
+// loads a 29GB model at 131072 because that is all it can fit, and reports the
+// smaller number back. `loadedContext >= target` never becomes true, so with
+// autoEnsureContext on the model was unloaded and reloaded before EVERY message
+// and landed on the same 128K each time.
+test('decideContextLoad does not re-ask for a window LM Studio already refused', () => {
+  const model = { loaded: true, loadedContext: 131072, maxContext: 262144 };
+  const prior = { target: 262144, granted: 131072 };
+  const d = decideContextLoad(model, 262144, prior);
+  assert.equal(d.action, 'none');
+  assert.equal(d.reason, 'refused');
+  // The FIRST attempt still loads — the refusal has to be observed to be known.
+  assert.equal(decideContextLoad(model, 262144).action, 'load');
+});
+
+test('decideContextLoad still grows a model that is genuinely too small', () => {
+  const prior = { target: 262144, granted: 131072 };
+  // A different target was never refused, so it is a fresh question.
+  assert.equal(
+    decideContextLoad({ loaded: true, loadedContext: 32768, maxContext: 262144 }, 65536, prior)
+      .action,
+    'load',
+  );
+  // And a 128K window already covers a 64K floor.
+  assert.equal(
+    decideContextLoad({ loaded: true, loadedContext: 131072, maxContext: 262144 }, 65536, prior)
+      .reason,
+    'satisfied',
+  );
+});
+
+test('decideContextLoad loads an unloaded model regardless of a prior refusal', () => {
+  const prior = { target: 262144, granted: 131072 };
+  const d = decideContextLoad({ loaded: false, maxContext: 262144 }, 262144, prior);
+  assert.equal(d.action, 'load');
+  assert.equal(d.reason, 'not-loaded');
+});

@@ -1210,6 +1210,15 @@ body {
   color: var(--vscode-list-activeSelectionForeground, var(--vscode-foreground));
   border-color: var(--vscode-panel-border, rgba(128, 128, 128, 0.4));
 }
+
+/* The size actually loaded, when LM Studio granted something other than what
+   was requested. The request keeps `.active` (it still applies on the next
+   load); this marks which chip is the one running right now. */
+.ctx-preset.in-force {
+  border-color: var(--vscode-editorWarning-foreground, #d7a23b);
+  color: var(--vscode-editorWarning-foreground, #d7a23b);
+}
+
 /* Hidden entirely for models that report no reasoning support, so the menu
    shows no control rather than a dead one. */
 .model-menu-foot.hidden {

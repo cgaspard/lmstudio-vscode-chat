@@ -3,7 +3,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { lmStudioRestRoot } from '../config';
-import { decideContextLoad } from '../core/context';
+import { decideContextLoad, formatTokens, type ContextGrant } from '../core/context';
 import type { ReasoningCapability } from '../core/effort';
 import { ProbeStatus } from '../core/health';
 import { log, logError } from '../logger';
@@ -344,6 +344,13 @@ export class LMStudioClient {
    * (`/api/v1/models/load|unload`), falling back to the `lms` CLI only if REST
    * is unavailable. Never throws.
    */
+  /**
+   * What LM Studio last granted for a requested window, per model id. A server
+   * that hands back less than we asked for has told us something worth
+   * remembering — see decideContextLoad.
+   */
+  private grants = new Map<string, ContextGrant>();
+
   async ensureContext(
     modelId: string,
     minContext: number,
@@ -363,9 +370,16 @@ export class LMStudioClient {
           maxContext: model.maxContextLength,
         },
         minContext,
+        this.grants.get(modelId),
       );
       if (decision.action === 'none') {
-        return { reloaded: false, context: ctx || undefined };
+        // Short of the request only because LM Studio already refused it. Say
+        // so rather than leaving the user to notice the size never took.
+        const note =
+          decision.reason === 'refused'
+            ? `${prettyName(modelId)} loaded at ${formatTokens(ctx)} — LM Studio would not grant the ${formatTokens(decision.target)} requested.`
+            : undefined;
+        return { reloaded: false, context: ctx || undefined, note };
       }
       const target = decision.target;
       onProgress?.(`Loading ${prettyName(modelId)} with ${target.toLocaleString()} context…`);
@@ -376,7 +390,18 @@ export class LMStudioClient {
           await this.unloadInstance(id).catch(() => undefined);
         }
         const loaded = await this.loadModel(modelId, target);
-        return { reloaded: true, context: loaded.contextLength ?? target };
+        const granted = loaded.contextLength ?? target;
+        // Remember a short grant so the next message does not repeat the whole
+        // unload/load cycle to arrive at the same number.
+        this.grants.set(modelId, { target, granted });
+        return {
+          reloaded: true,
+          context: granted,
+          note:
+            granted < target
+              ? `${prettyName(modelId)} loaded at ${formatTokens(granted)} — LM Studio would not grant the ${formatTokens(target)} requested.`
+              : undefined,
+        };
       } catch (restErr) {
         logError('REST model load failed, trying lms CLI fallback', restErr);
       }
@@ -422,6 +447,9 @@ export class LMStudioClient {
 
   /** Unload a specific loaded instance via REST. */
   async unloadInstance(instanceId: string): Promise<void> {
+    // A grant is evidence about a resident model under the memory pressure of
+    // the moment; ejecting voids it so the next load tries properly again.
+    this.grants.delete(instanceId);
     const res = await fetch(`${this.rest}/api/v1/models/unload`, {
       method: 'POST',
       headers: this.headers({ 'content-type': 'application/json' }),
@@ -435,6 +463,7 @@ export class LMStudioClient {
 
   /** Unload every loaded instance of a model (by model key). */
   async unloadModel(modelId: string): Promise<void> {
+    this.grants.delete(modelId);
     const ids = await this.loadedInstanceIds(modelId);
     for (const id of ids) {
       await this.unloadInstance(id).catch(() => undefined);

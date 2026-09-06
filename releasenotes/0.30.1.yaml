@@ -1,0 +1,12 @@
+version: 0.30.1
+date: 2026-09-06
+highlights:
+  - A local server that grants a smaller context window than you asked for no longer causes the model to be unloaded and reloaded before every single message.
+  - When the granted window differs from the requested one, the picker now marks which size is actually running, and you are told once rather than left to notice.
+fixed:
+  - Asking for a window the server will not grant put the model into an unload/reload cycle on every prompt. LM Studio accepts `context_length: 262144`, loads the model at 131072 because that is all it can fit, and reports the smaller figure back — so the "is the loaded window big enough" test never became true, and with autoEnsureContext on, a 29GB model was ejected and reloaded before each message only to land on the same 128K again. A refused request is now remembered - a model sitting at the window the server actually handed back is treated as being as close to the request as that server will get. Changing the requested size, or ejecting the model, clears that memory and it tries properly again.
+  - A short grant is no longer silent. The granted window was returned by the loader and then discarded unless the load had errored outright, so the only trace that a request had been trimmed was the smaller number on the model row. It now says which size it got and which it asked for.
+  - The context picker marks the window in force. The requested size keeps its highlight, because that is what applies on the next load, but when the loaded window is a different size that preset is now marked too — previously the picker showed 256K as selected while the model ran at 128K, with only the note underneath to explain the gap.
+added: []
+changed: []
+removed: []

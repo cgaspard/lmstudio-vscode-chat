@@ -73,7 +73,13 @@ export interface ContextDecision {
   action: 'load' | 'none';
   /** The window to ask for — always clamped to the model's real maximum. */
   target: number;
-  reason: 'not-loaded' | 'below-floor' | 'satisfied' | 'no-target';
+  reason: 'not-loaded' | 'below-floor' | 'satisfied' | 'no-target' | 'refused';
+}
+
+/** What LM Studio last granted for a given requested window, per model. */
+export interface ContextGrant {
+  target: number;
+  granted: number;
 }
 
 /**
@@ -84,8 +90,21 @@ export interface ContextDecision {
  * with is LM Studio's decision (its load API ignores `context_length` on some
  * builds), and treating it as ours would mean unloading the user's model before
  * every send to chase a number the server won't honor anyway.
+ *
+ * `prior` is the same argument taken one step further. LM Studio will accept
+ * `context_length: 262144`, load a 29GB model at 131072 because that is all it
+ * can fit, and report the smaller number back. `loadedContext >= target` never
+ * becomes true for that model, so without remembering the refusal this grows it
+ * before EVERY message — a full unload and reload of the weights per prompt, to
+ * arrive at the same window every time. Once the server has answered a specific
+ * target with a smaller grant, a model sitting at that grant is as close as it
+ * will get. Changing the target or ejecting the model clears the memory.
  */
-export function decideContextLoad(model: LoadedModelState, requested: number): ContextDecision {
+export function decideContextLoad(
+  model: LoadedModelState,
+  requested: number,
+  prior?: ContextGrant,
+): ContextDecision {
   const target = clampContext(requested, model.maxContext);
   if (target <= 0) {
     // Neither a usable request nor a known maximum — nothing to ask for.
@@ -95,9 +114,13 @@ export function decideContextLoad(model: LoadedModelState, requested: number): C
     return { action: 'load', target, reason: 'not-loaded' };
   }
   const ctx = model.loadedContext && model.loadedContext > 0 ? model.loadedContext : 0;
-  return ctx >= target
-    ? { action: 'none', target, reason: 'satisfied' }
-    : { action: 'load', target, reason: 'below-floor' };
+  if (ctx >= target) {
+    return { action: 'none', target, reason: 'satisfied' };
+  }
+  if (prior && prior.target === target && ctx >= prior.granted) {
+    return { action: 'none', target, reason: 'refused' };
+  }
+  return { action: 'load', target, reason: 'below-floor' };
 }
 
 export interface WindowModel {
