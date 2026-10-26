@@ -146,6 +146,8 @@ test('a live compaction renders as the marker + summary pair, then session.compa
   const out = fx.compaction.flatMap((e) => t.translate({ ...e, data: { ...e.data, sessionID: 'ses_c' } }));
   const parts = out.filter((e) => e.type === 'message.part.updated').map((e) => (e.properties as any).part);
   assert.equal(parts[0].type, 'compaction', 'the marker comes first');
+  const firstMsg = out.find((e) => e.type === 'message.updated')!.properties as any;
+  assert.equal(firstMsg.info.role, 'assistant', 'no message.updated for the marker (it would draw an empty user bubble)');
   assert.equal(parts[1].messageID, 'msg_c1', 'the summary turn takes the compaction id, as history does');
   assert.match(String(parts[1].text), /Objective/);
   assert.equal(out.at(-1)!.type, 'session.compacted');

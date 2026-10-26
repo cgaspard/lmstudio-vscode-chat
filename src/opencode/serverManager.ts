@@ -117,20 +117,31 @@ export class OpencodeServerManager {
     if (this.starting) {
       return this.starting;
     }
-    this.starting = this.doStart().finally(() => {
-      this.starting = undefined;
+    const starting: Promise<ServerStartResult> = this.doStart().finally(() => {
+      // Only clear our own start: a dispose() + start() may have replaced it.
+      if (this.starting === starting) {
+        this.starting = undefined;
+      }
     });
-    return this.starting;
+    this.starting = starting;
+    return starting;
   }
 
   private async doStart(): Promise<ServerStartResult> {
     await this.closing;
+    const starting = this.starting;
     const bakedIdentity = this.currentIdentity();
     const configContent = await this.buildConfigContent();
     const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? os.homedir();
     const version = this.engineVersion();
     log(`starting embedded opencode ${version} (cwd=${cwd})`);
     const host = await createHost(this.extensionPath, { root: this.dataDir }, configContent);
+    if (this.starting !== starting) {
+      // dispose() ran while the engine was being created: this start is stale
+      // and its host must not outlive it.
+      await host.close().catch((err: unknown) => logError('closing a superseded engine', err));
+      throw new Error('OpenCode engine stopped');
+    }
     this.host = host;
     this.client = new OpencodeV2Client(host, cwd, version);
     this.bakedIdentity = bakedIdentity;
@@ -288,6 +299,9 @@ export class OpencodeServerManager {
     this.host = undefined;
     this.client = undefined;
     this.bakedIdentity = undefined;
+    // Drop any in-flight start so a dispose mid-startup (e.g. restart()) can't
+    // have its stale promise returned by the next start() — forces a fresh one.
+    this.starting = undefined;
     // Closing releases the engine's watchers, MCP children and database. The
     // next start waits for it (see `closing`).
     if (host) {

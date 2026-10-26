@@ -397,11 +397,14 @@ export class EventTranslator {
         }
         const now = Date.now();
         const summary = String(d.text ?? '');
+        const [marker, summaryTurn] = compactionMessages(sid ?? '', id, summary, now);
         return [
-          ...compactionMessages(sid ?? '', id, summary, now).flatMap((m) => [
-            ev('message.updated', { info: m.info }),
-            ...m.parts.map((p) => ev('message.part.updated', { part: p })),
-          ]),
+          // The marker goes as its part alone: the webview recognises the part
+          // and never builds a bubble for the marker's (user) message, whereas
+          // a message.updated first would leave an empty user bubble behind.
+          ...marker.parts.map((p) => ev('message.part.updated', { part: p })),
+          ev('message.updated', { info: summaryTurn.info }),
+          ...summaryTurn.parts.map((p) => ev('message.part.updated', { part: p })),
           ev('session.compacted', { sessionID: sid, summary }),
         ];
       }

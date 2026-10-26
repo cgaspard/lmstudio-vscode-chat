@@ -398,7 +398,7 @@ export class OpencodeV2Client {
    * bridge was built for 1.x, which held the call open until the summary
    * existed, so wait for the outcome here.
    */
-  async summarize(sessionID: string, _providerID: string, _modelID: string): Promise<void> {
+  async summarize(sessionID: string, _providerID: string, _modelID: string): Promise<string> {
     const done = this.waitFor(
       (e) => (e.type === 'session.compacted' || e.type === 'session.error') && (e.properties as any).sessionID === sessionID,
       COMPACT_TIMEOUT_MS,
@@ -408,6 +408,9 @@ export class OpencodeV2Client {
     if (outcome?.type === 'session.error') {
       throw new Error(String((outcome.properties as any).error?.data?.message ?? 'Compaction failed'));
     }
+    // The summary rides on the completion event. Reading it back from history
+    // right away can race the engine persisting the completed compaction.
+    return String((outcome?.properties as any)?.summary ?? '');
   }
 
   // ---- Steering inbox ------------------------------------------------------------
