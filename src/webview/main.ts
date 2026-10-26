@@ -2357,6 +2357,12 @@ function mdToHtml(src: string): string {
   const tpl = document.createElement('template');
   tpl.innerHTML = raw;
   tpl.content.querySelectorAll('script,iframe,object,embed,link,meta,style').forEach((n) => n.remove());
+  // A <template> never renders: its content lives outside the document. Models
+  // echo the <template> wrapper of OpenCode 2's compaction prompt around the
+  // summary, which then showed as an empty chip. Show what is inside instead.
+  for (let t = tpl.content.querySelector('template'); t; t = tpl.content.querySelector('template')) {
+    t.replaceWith((t as HTMLTemplateElement).content);
+  }
   tpl.content.querySelectorAll('*').forEach((el) => {
     for (const attr of Array.from(el.attributes)) {
       if (/^on/i.test(attr.name)) {
