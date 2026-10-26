@@ -2,7 +2,12 @@
 // streaming markdown, reasoning blocks and the effort control, the context
 // meter and tok/s.
 import * as assert from 'node:assert';
-import { assistantText, ask, freshChat, h, read, REASONING_MODEL, until } from './lib';
+import { assistantText, ask, freshChat, h, lmStudioModels, read, REASONING_MODEL, until } from './lib';
+
+/** Whether LM Studio reports the reasoning model as one that can think. */
+async function reasons(): Promise<boolean> {
+  return !!(await lmStudioModels()).find((m) => m.key === REASONING_MODEL)?.reasoning;
+}
 
 describe('e2e · the agent', function () {
   it('reads a file with a tool and answers from it', async () => {
@@ -60,11 +65,23 @@ describe('e2e · the agent', function () {
     await freshChat({ model: REASONING_MODEL });
     await ask('What is 17 * 23? Think it through, then answer with just the number.', 600_000);
     assert.match(await assistantText(), /391/);
-    assert.ok((await h.count('.part-reasoning')) > 0, 'a thinking block rendered');
+    if (await reasons()) {
+      assert.ok((await h.count('.part-reasoning')) > 0, 'a thinking block rendered');
+    } else {
+      // The test model reports no reasoning: no thinking block may appear
+      // (point E2E_REASONING_MODEL at a reasoning model to see one).
+      assert.strictEqual(await h.count('.part-reasoning'), 0, 'no thinking block for a model that does not reason');
+    }
   });
 
-  it('/effort off stops a reasoning model from thinking', async () => {
+  it('/effort follows what the model reports: off silences a reasoning model, a plain one has no control', async () => {
     await freshChat({ model: REASONING_MODEL });
+    if (!(await reasons())) {
+      await h.setInput('/effort');
+      await h.keydown('Enter');
+      await until(async () => (await h.allText('.sys-chip')).some((t) => /no reasoning support/i.test(t)), 10_000, 'the no-reasoning chip');
+      return;
+    }
     await h.setInput('/effort off');
     await h.keydown('Enter');
     await until(async () => (await h.allText('.sys-chip')).some((t) => /effort set to Off/i.test(t)), 10_000, 'the effort chip');

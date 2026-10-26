@@ -4,7 +4,7 @@
 //   npm run test:live            (builds, then runs under VS Code's own runtime)
 //
 // Env: LIVE_BASE_URL (default http://127.0.0.1:1234/v1), LIVE_MODEL (default
-// qwen3-vl-30b-a3b-instruct-mlx).
+// qwen/qwen3-vl-4b).
 import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
@@ -16,7 +16,7 @@ import { OpencodeV2Client } from '../src/opencode/v2client';
 
 const REPO = path.resolve(__dirname, '..');
 const BASE_URL = process.env.LIVE_BASE_URL ?? 'http://127.0.0.1:1234/v1';
-const MODEL = process.env.LIVE_MODEL ?? 'qwen3-vl-30b-a3b-instruct-mlx';
+const MODEL = process.env.LIVE_MODEL ?? 'qwen/qwen3-vl-4b';
 // The id the panel uses. It is reserved by OpenCode 2's built-in LM Studio
 // plugin, so the config declares it under its engine id (see providerIds.ts)
 // and the client maps it back.

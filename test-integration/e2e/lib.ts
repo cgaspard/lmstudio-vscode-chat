@@ -6,10 +6,11 @@ import * as vscode from 'vscode';
 import * as h from '../suite/helpers';
 
 export const BASE_URL = process.env.E2E_BASE_URL ?? 'http://127.0.0.1:1234/v1';
-export const MODEL = process.env.E2E_MODEL ?? 'qwen3-vl-30b-a3b-instruct-mlx';
-export const REASONING_MODEL = process.env.E2E_REASONING_MODEL ?? 'qwen/qwen3.8-27b';
-/** A small model the LM Studio tests load, resize and eject (never the shared big ones). */
-export const SMALL_MODEL = process.env.E2E_SMALL_MODEL ?? 'qwen/qwen3-vl-4b';
+// One small model for everything: the LM Studio is shared, so keep loads down.
+export const MODEL = process.env.E2E_MODEL ?? 'qwen/qwen3-vl-4b';
+export const REASONING_MODEL = process.env.E2E_REASONING_MODEL ?? MODEL;
+/** The model the LM Studio tests eject, load and resize: the same one. */
+export const SMALL_MODEL = process.env.E2E_SMALL_MODEL ?? MODEL;
 export const WORKSPACE = process.env.E2E_WORKSPACE ?? '';
 
 export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -58,7 +59,7 @@ export async function freshChat(opts: { model?: string; agent?: string } = {}): 
 }
 
 /** LM Studio's chat models, in the order the panel's model menu lists them. */
-export async function lmStudioModels(): Promise<Array<{ key: string; loaded: boolean; context: number }>> {
+export async function lmStudioModels(): Promise<Array<{ key: string; loaded: boolean; context: number; reasoning: boolean }>> {
   const root = BASE_URL.replace(/\/v\d+\/?$/, '');
   const res = await fetch(`${root}/api/v1/models`);
   const json = (await res.json()) as { models: any[] };
@@ -68,6 +69,7 @@ export async function lmStudioModels(): Promise<Array<{ key: string; loaded: boo
       key: m.key,
       loaded: (m.loaded_instances ?? []).length > 0,
       context: m.loaded_instances?.[0]?.config?.context_length ?? 0,
+      reasoning: !!m.capabilities?.reasoning,
     }));
 }
 

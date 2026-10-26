@@ -4,7 +4,7 @@
 //
 // Opt-in (it needs a model and takes a minute): LIVE_UI=1 npm run test:integration
 // Optional: LIVE_BASE_URL (default http://127.0.0.1:1234/v1),
-//           LIVE_MODEL (default qwen3-vl-30b-a3b-instruct-mlx).
+//           LIVE_MODEL (default qwen/qwen3-vl-4b).
 //
 // Prompts are text-only on purpose: this harness opens VS Code without a
 // workspace folder, so the agent's working directory is the home directory.
@@ -15,7 +15,7 @@ import * as helpers from './helpers';
 const { openPanel, count, allText, waitFor, setInput, keydown, attr } = helpers;
 const LIVE = process.env.LIVE_UI === '1';
 const BASE_URL = process.env.LIVE_BASE_URL ?? 'http://127.0.0.1:1234/v1';
-const MODEL = process.env.LIVE_MODEL ?? 'qwen3-vl-30b-a3b-instruct-mlx';
+const MODEL = process.env.LIVE_MODEL ?? 'qwen/qwen3-vl-4b';
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 async function until(pred: () => Promise<boolean>, ms: number, what: string): Promise<void> {

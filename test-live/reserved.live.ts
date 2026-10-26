@@ -13,7 +13,7 @@ import { createHost } from '../src/opencode/embedded';
 import { OpencodeV2Client } from '../src/opencode/v2client';
 
 const BASE_URL = process.env.LIVE_BASE_URL ?? 'http://127.0.0.1:1234/v1';
-const MODEL = process.env.LIVE_MODEL ?? 'qwen3-vl-30b-a3b-instruct-mlx';
+const MODEL = process.env.LIVE_MODEL ?? 'qwen/qwen3-vl-4b';
 const RESERVED = 'lmstudio';
 const DISCOVERY_WAIT_MS = 40_000; // the plugins refresh every 30s
 

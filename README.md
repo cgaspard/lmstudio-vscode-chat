@@ -250,10 +250,10 @@ deliberate. `opencode-sdk/` is generated and git-ignored; run
 `bundle:opencode-sdk` once before launching the dev host, and again after
 changing the pinned version.
 
-`test:e2e` needs a tool-capable vision model (default
-`qwen3-vl-30b-a3b-instruct-mlx`) and a reasoning model (default
-`qwen/qwen3.8-27b`) in LM Studio; override with `E2E_BASE_URL`, `E2E_MODEL` and
-`E2E_REASONING_MODEL`.
+`test:e2e` and `test:live` need a tool-capable vision model in LM Studio
+(default `qwen/qwen3-vl-4b`; the LM Studio tests eject, load and resize it
+through the panel). Override with `E2E_BASE_URL` / `E2E_MODEL` /
+`E2E_REASONING_MODEL` and `LIVE_BASE_URL` / `LIVE_MODEL`.
 
 ## License
 

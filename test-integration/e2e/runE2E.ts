@@ -27,7 +27,16 @@ async function main(): Promise<void> {
       extensionTestsPath: path.resolve(__dirname, 'index.js'),
       // A fresh profile per run, so a previous run's sessions and settings
       // cannot make a test pass.
-      launchArgs: [workspace, '--disable-extensions', `--user-data-dir=${fs.mkdtempSync(path.join(os.tmpdir(), 'lms-e2e-profile-'))}`],
+      launchArgs: [
+        workspace,
+        '--disable-extensions',
+        `--user-data-dir=${fs.mkdtempSync(path.join(os.tmpdir(), 'lms-e2e-profile-'))}`,
+        // A run takes half an hour; another window on top must not throttle
+        // this one's renderer (and with it the webview the suite drives).
+        '--disable-renderer-backgrounding',
+        '--disable-background-timer-throttling',
+        '--disable-backgrounding-occluded-windows',
+      ],
       extensionTestsEnv: {
         E2E_WORKSPACE: workspace,
         LMSTUDIO_CODE_LOG_STDOUT: '1',

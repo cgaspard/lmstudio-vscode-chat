@@ -71,8 +71,6 @@ describe('e2e · context', function () {
 
   it('/compact summarizes the conversation and shows the summary', async function () {
     this.timeout(900_000);
-    // The summary is written by the session's model; the small instruct model
-    // tends to summarize the summarizing instructions instead of the chat.
     await freshChat({ model: REASONING_MODEL });
     await ask('Remember this: the launch code is ZEBRA-9. Reply OK.', 600_000);
     await h.setInput('/compact');

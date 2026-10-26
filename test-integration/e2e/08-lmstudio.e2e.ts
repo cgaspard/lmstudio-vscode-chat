@@ -1,8 +1,8 @@
 // LM Studio itself: load and eject from the model picker, the "Context on
 // load" presets, the automatic context reload before a prompt, and several
 // LM Studio servers with their own API keys. Everything that loads or ejects
-// uses SMALL_MODEL, never the models the rest of the suite (or anyone else)
-// is using.
+// uses SMALL_MODEL (by default the suite's one small model), only ever through
+// the panel.
 import * as assert from 'node:assert';
 import * as vscode from 'vscode';
 import {
@@ -46,15 +46,6 @@ describe('e2e · LM Studio', function () {
   after(async () => {
     await closeModelMenu().catch(() => undefined);
     await setMinContext(undefined);
-    // Leave LM Studio as we found it: the small model unloaded.
-    if ((await small()).loaded) {
-      const { index, label } = await smallAction();
-      if (/Eject/.test(label)) {
-        await h.click('#model-menu-list .model-row .model-action', index);
-        await until(async () => !(await small()).loaded, 60_000, 'the small model to unload');
-      }
-      await closeModelMenu();
-    }
   });
 
   it('Load in the model picker loads the model at the requested window', async () => {

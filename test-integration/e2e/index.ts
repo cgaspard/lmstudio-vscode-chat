@@ -4,9 +4,12 @@ import { glob } from 'glob';
 import Mocha from 'mocha';
 
 export async function run(): Promise<void> {
-  // Real model turns: generous per-test timeout, and no retries — a flaky
-  // feature should show up as a failure, not hide behind a second attempt.
-  const mocha = new Mocha({ ui: 'bdd', color: true, timeout: 300_000, ...(process.env.E2E_GREP ? { grep: process.env.E2E_GREP } : {}) });
+  // Real model turns: no retries — a flaky feature should show up as a
+  // failure, not hide behind a second attempt. Every wait inside a test is
+  // bounded (lib.until), so the test timeout is only a backstop and must exceed
+  // any test's own waits: a test mocha times out keeps running, and when its
+  // wait later rejects outside any test mocha aborts the whole run.
+  const mocha = new Mocha({ ui: 'bdd', color: true, timeout: 1_800_000, ...(process.env.E2E_GREP ? { grep: process.env.E2E_GREP } : {}) });
   const files = (await glob('**/*.e2e.js', { cwd: __dirname })).sort();
   files.forEach((f) => mocha.addFile(path.resolve(__dirname, f)));
   // On any failure, print what the panel was showing: the assertion alone
