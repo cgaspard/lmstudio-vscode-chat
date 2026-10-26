@@ -73,6 +73,15 @@ export class OpencodeServerManager {
   }
 
   /**
+   * Whether `client` is the running engine's client. After a restart a new
+   * engine is running (isRunning is true again) but a panel can still hold
+   * the old, stopped client.
+   */
+  isCurrent(client: OpencodeV2Client | undefined): boolean {
+    return !!client && client === this.client;
+  }
+
+  /**
    * Register a callback fired whenever the engine stops unexpectedly.
    * Multiple bridges (sidebar + secondary + editor tabs) share one manager, so
    * each registers its own listener and disposes it on teardown.
