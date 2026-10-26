@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 // Minimal stdio MCP server for the e2e suite: one tool, `secret_number`, that
 // returns a fixed token. Hand-rolled JSON-RPC so the fixture has no deps.
+const LOG = process.env.MCP_ECHO_LOG;
+const note = (line) => LOG && require('node:fs').appendFileSync(LOG, line + '\n');
 let buf = '';
 const send = (msg) => process.stdout.write(JSON.stringify({ jsonrpc: '2.0', ...msg }) + '\n');
 process.stdin.on('data', (chunk) => {
@@ -11,6 +13,7 @@ process.stdin.on('data', (chunk) => {
     buf = buf.slice(i + 1);
     if (!line) continue;
     let req;
+    note(`<- ${line}`);
     try {
       req = JSON.parse(line);
     } catch {

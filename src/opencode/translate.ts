@@ -7,7 +7,7 @@
 // No I/O here: everything is unit-tested against payloads captured from a live
 // OpenCode 2.1.4 (test/translate.test.ts).
 import { fromEngineProviderID } from '../core/providerIds';
-import type { McpStatusResponse, MessageWithParts, OpencodeEvent, Part, QuestionAnswer, QuestionInfo } from './protocol';
+import type { MessageWithParts, OpencodeEvent, Part, QuestionAnswer, QuestionInfo } from './protocol';
 
 /** An event as the v2 SDK's `event.subscribe()` yields it. */
 export interface V2Event {
@@ -113,26 +113,6 @@ const stepStartId = (mid: string) => `${mid}:step-start`;
 const stepFinishId = (mid: string) => `${mid}:step-finish`;
 const userTextId = (mid: string) => `${mid}:text`;
 const userFileId = (mid: string, i: number) => `${mid}:file:${i}`;
-
-// ---- MCP status -----------------------------------------------------------------
-
-/**
- * v2 `mcp.list` rows → the 1.x `{name: {status, error}}` map the /mcp panel
- * reads. 2.1.4 nests the state as `status: {status: 'connected'}` (an error,
- * when there is one, beside it); a flat string or a `{type}` object is
- * accepted too, so a shape change degrades to a readable status rather than
- * "[object Object]".
- */
-export function v1McpStatus(rows: any[]): McpStatusResponse {
-  const out: McpStatusResponse = {};
-  for (const s of rows) {
-    const st = s?.status;
-    const status = typeof st === 'string' ? st : typeof st?.status === 'string' ? st.status : typeof st?.type === 'string' ? st.type : 'pending';
-    const error = st?.error ?? s?.error;
-    out[String(s?.name ?? s?.id)] = { ...s, status, ...(error ? { error: typeof error === 'string' ? error : errorMessage(error) } : { error: undefined }) };
-  }
-  return out;
-}
 
 // ---- Prompt attachments -------------------------------------------------------
 
@@ -271,6 +251,8 @@ export class EventTranslator {
    * them).
    */
   private readonly turns = new Map<string, string>();
+  /** session id -> the inbox id of its running compaction. */
+  private readonly compactions = new Map<string, string>();
   /** step message id -> its turn message id. */
   private readonly stepTurn = new Map<string, string>();
   private readonly text = new Map<string, string>();
@@ -400,21 +382,26 @@ export class EventTranslator {
         return [ev('session.retry', { sessionID: sid, attempt: d.attempt, at: d.at, message: errorMessage(d.error) })];
 
       // -- compaction ----------------------------------------------------------
+      case 'session.compaction.started':
+        if (sid && d.inputID) {
+          this.compactions.set(sid, String(d.inputID));
+        }
+        return [];
       case 'session.compaction.ended': {
-        // 1.x announced a compaction live as a marker message (a `compaction`
-        // part) followed by the summarizer's turn, which the webview folds
-        // into one expandable chip. v2 only reports the outcome, so emit that
-        // same pair — the shape history already has (see v1History) — or the
-        // chip would only appear after a reload.
-        const mid = `${sid}:compaction:${e.id ?? Date.now()}`;
-        const marker = `${mid}:marker`;
+        // The webview shows a compaction as a marker message followed by the
+        // summarizer's turn, folded into one expandable chip — the 1.x shape,
+        // which v1History also produces for a reloaded session (same ids).
+        const id = (sid && this.compactions.get(sid)) || `compaction:${sid}:${Date.now()}`;
+        if (sid) {
+          this.compactions.delete(sid);
+        }
         const now = Date.now();
         const summary = String(d.text ?? '');
         return [
-          ev('message.updated', { info: { id: marker, sessionID: sid, role: 'user', time: { created: now } } }),
-          ev('message.part.updated', { part: { id: `${marker}:part`, sessionID: sid, messageID: marker, type: 'compaction' } }),
-          ev('message.updated', { info: { id: mid, sessionID: sid, role: 'assistant', time: { created: now, completed: now } } }),
-          ...(summary ? [ev('message.part.updated', { part: { id: textPartId(mid, 0), sessionID: sid, messageID: mid, type: 'text', text: summary } })] : []),
+          ...compactionMessages(sid ?? '', id, summary, now).flatMap((m) => [
+            ev('message.updated', { info: m.info }),
+            ...m.parts.map((p) => ev('message.part.updated', { part: p })),
+          ]),
           ev('session.compacted', { sessionID: sid, summary }),
         ];
       }
@@ -538,6 +525,24 @@ export class EventTranslator {
   }
 }
 
+/**
+ * A compaction as the 1.x pair the webview folds into one chip: a marker
+ * message, then the summarizer's turn carrying the summary text.
+ */
+function compactionMessages(sid: string, id: string, summary: string, created: number): MessageWithParts[] {
+  const marker = `${id}:marker`;
+  return [
+    {
+      info: { id: marker, sessionID: sid, role: 'user', time: { created } },
+      parts: [{ id: `${marker}:part`, sessionID: sid, messageID: marker, type: 'compaction' }],
+    },
+    {
+      info: { id, sessionID: sid, role: 'assistant', time: { created } },
+      parts: summary ? [{ id: textPartId(id, 0), sessionID: sid, messageID: id, type: 'text', text: summary }] : [],
+    },
+  ];
+}
+
 /** The 1.x events for one user message (bubble + its text and attachments). */
 function userMessageEvents(sid: string, mid: string, payload: any, created: number): OpencodeEvent[] {
   const msg = userMessage(sid, mid, payload, created);
@@ -598,19 +603,9 @@ export function v1History(sessionID: string, rows: any[]): MessageWithParts[] {
       case 'user':
         out.push(userMessage(sessionID, m.id, { text: m.text, files: m.files }, created));
         break;
-      case 'compaction': {
-        const marker = `${m.id}:marker`;
-        out.push({
-          info: { id: marker, sessionID, role: 'user', time: { created } },
-          parts: [{ id: `${marker}:part`, sessionID, messageID: marker, type: 'compaction' }],
-        });
-        const summary = String(m.text ?? m.summary ?? m.payload?.text ?? '');
-        out.push({
-          info: { id: m.id, sessionID, role: 'assistant', time: { created } },
-          parts: summary ? [{ id: textPartId(m.id, 0), sessionID, messageID: m.id, type: 'text', text: summary }] : [],
-        });
+      case 'compaction':
+        out.push(...compactionMessages(sessionID, String(m.id), String(m.text ?? m.summary ?? m.payload?.text ?? ''), created));
         break;
-      }
       default:
         break; // idle markers, synthetic notes: not chat (but they do end a turn)
     }

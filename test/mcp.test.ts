@@ -8,6 +8,7 @@ import {
   normalizeEntry,
   resolveMapVars,
   resolveServerVars,
+  toEngineMcp,
   withLocalEnvironment,
 } from '../src/core/mcp';
 
@@ -286,4 +287,15 @@ test('remote MCP servers are left completely untouched', () => {
   const got = withLocalEnvironment({ srv: remote }, { PATH: '/usr/bin' });
   assert.deepEqual(got.srv, remote);
   assert.equal('environment' in got.srv, false);
+});
+
+test('servers become OpenCode 2 native entries with Code Mode off', () => {
+  const got = toEngineMcp({
+    local: { type: 'local', command: ['npx', 'srv'], environment: { A: '1' }, enabled: true },
+    off: { type: 'local', command: ['x'], enabled: false },
+    web: { type: 'remote', url: 'https://example.com/mcp', headers: { Authorization: 'Bearer t' } },
+  });
+  assert.deepEqual(got.servers.local, { type: 'local', command: ['npx', 'srv'], environment: { A: '1' }, codemode: false });
+  assert.deepEqual(got.servers.off, { type: 'local', command: ['x'], disabled: true, codemode: false }, 'enabled:false becomes disabled');
+  assert.deepEqual(got.servers.web, { type: 'remote', url: 'https://example.com/mcp', headers: { Authorization: 'Bearer t' }, codemode: false });
 });

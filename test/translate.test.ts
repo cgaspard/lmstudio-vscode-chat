@@ -13,7 +13,6 @@ import {
   v2FormAnswer,
   v2PromptFile,
   type V2Event,
-  v1McpStatus,
 } from '../src/opencode/translate';
 
 // Payloads captured from a live OpenCode 2.1.4 (paths scrubbed).
@@ -141,23 +140,17 @@ test('non-question forms are not shown as questions', () => {
   assert.equal(out.length, 0);
 });
 
-test('compaction completion reports session.compacted with the summary', () => {
-  const { out } = run(fx.compaction);
-  const done = out.find((e) => e.type === 'session.compacted');
-  assert.ok(done);
-  assert.match(String((done.properties as any).summary), /Objective/);
-});
-
-test('a finished compaction shows live as a marker plus the summary turn, as in history', () => {
-  const { out } = run(fx.compaction);
-  const msgs = out.filter((e) => e.type === 'message.updated').map((e) => (e.properties as any).info);
-  assert.deepEqual(msgs.map((m) => m.role), ['user', 'assistant'], 'marker first, then the summary turn the webview folds');
+test('a live compaction renders as the marker + summary pair, then session.compacted', () => {
+  const t = new EventTranslator();
+  t.translate({ type: 'session.compaction.started', data: { sessionID: 'ses_c', inputID: 'msg_c1', reason: 'manual' } });
+  const out = fx.compaction.flatMap((e) => t.translate({ ...e, data: { ...e.data, sessionID: 'ses_c' } }));
   const parts = out.filter((e) => e.type === 'message.part.updated').map((e) => (e.properties as any).part);
-  assert.equal(parts[0].type, 'compaction');
-  assert.equal(parts[0].messageID, msgs[0].id);
-  assert.equal(parts[1].messageID, msgs[1].id);
-  assert.match(parts[1].text, /Objective/);
-  assert.equal(out.at(-1)?.type, 'session.compacted', 'the outcome comes last, after the chip exists');
+  assert.equal(parts[0].type, 'compaction', 'the marker comes first');
+  assert.equal(parts[1].messageID, 'msg_c1', 'the summary turn takes the compaction id, as history does');
+  assert.match(String(parts[1].text), /Objective/);
+  assert.equal(out.at(-1)!.type, 'session.compacted');
+  const hist = v1History('ses_c', [{ id: 'msg_c1', type: 'compaction', text: 'x', time: { created: 1 } }]);
+  assert.deepEqual(hist.map((m) => m.info.id), [parts[0].messageID, 'msg_c1'], 'live and reloaded compactions share ids');
 });
 
 test('history comes back oldest first, a turn\'s steps folded into one message', () => {
@@ -246,19 +239,4 @@ test('prompt attachments are data: URLs carrying exactly what the panel chose', 
   assert.match(sel.uri, /^data:text\/plain;base64,/);
   assert.equal(Buffer.from(sel.uri.split(',')[1], 'base64').toString('utf8'), 'codeword = BANANA-17', 'only the selection, not the file');
   assert.match(String(sel.description), /app\.txt/);
-});
-
-test('MCP status: the nested 2.1.4 shape reads as the plain 1.x status', () => {
-  const got = v1McpStatus([
-    { name: 'e2e-echo', status: { status: 'connected' } },
-    { name: 'broken', status: { status: 'failed', error: 'spawn ENOENT' } },
-    { name: 'flat', status: 'disabled' },
-    { name: 'typed', status: { type: 'pending' } },
-  ]);
-  assert.equal(got['e2e-echo'].status, 'connected');
-  assert.equal(got['e2e-echo'].error, undefined);
-  assert.equal(got.broken.status, 'failed');
-  assert.equal(got.broken.error, 'spawn ENOENT');
-  assert.equal(got.flat.status, 'disabled');
-  assert.equal(got.typed.status, 'pending');
 });

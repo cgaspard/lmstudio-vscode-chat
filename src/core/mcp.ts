@@ -352,3 +352,38 @@ export function withLocalEnvironment<T extends { type: string; environment?: Rec
   }
   return out;
 }
+
+/** An MCP server in OpenCode 2's native config shape (`mcp.servers.<name>`). */
+export type EngineMcpServer =
+  | { type: 'local'; command: string[]; cwd?: string; environment?: Record<string, string>; disabled?: boolean; codemode: false }
+  | { type: 'remote'; url: string; headers?: Record<string, string>; disabled?: boolean; codemode: false };
+
+/**
+ * The discovered servers as OpenCode 2's native `mcp: { servers }` block.
+ *
+ * Native rather than the 1.x flat form: OpenCode 2 still reads the flat form,
+ * but its 1.x schema has no `codemode`, so the option would be dropped. And
+ * `codemode: false` matters: by default OpenCode 2 hides MCP tools behind its
+ * Code Mode `execute` tool (the model writes JavaScript that calls them).
+ * Exposed directly, as 1.x did, each tool gets its own card and permission
+ * prompt, and local models call a plain tool far more reliably than they write
+ * code to call one.
+ */
+export function toEngineMcp(map: OpencodeMcpMap): { servers: Record<string, EngineMcpServer> } {
+  const servers: Record<string, EngineMcpServer> = {};
+  for (const [name, s] of Object.entries(map)) {
+    const disabled = s.enabled === false ? { disabled: true } : {};
+    servers[name] =
+      s.type === 'local'
+        ? {
+            type: 'local',
+            command: s.command,
+            ...(s.cwd ? { cwd: s.cwd } : {}),
+            ...(s.environment ? { environment: s.environment } : {}),
+            ...disabled,
+            codemode: false,
+          }
+        : { type: 'remote', url: s.url, ...(s.headers ? { headers: s.headers } : {}), ...disabled, codemode: false };
+  }
+  return { servers };
+}
