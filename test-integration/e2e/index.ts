@@ -9,7 +9,11 @@ export async function run(): Promise<void> {
   // bounded (lib.until), so the test timeout is only a backstop and must exceed
   // any test's own waits: a test mocha times out keeps running, and when its
   // wait later rejects outside any test mocha aborts the whole run.
-  const mocha = new Mocha({ ui: 'bdd', color: true, timeout: 1_800_000, ...(process.env.E2E_GREP ? { grep: process.env.E2E_GREP } : {}) });
+  const mocha = new Mocha({ ui: 'bdd', color: true, timeout: 1_800_000,
+    // E2E_GREP picks tests; with E2E_INVERT=1 it skips them instead (e.g. run
+    // everything but the LM Studio load/eject tests, which need LM Studio alone).
+    ...(process.env.E2E_GREP ? { grep: process.env.E2E_GREP, invert: process.env.E2E_INVERT === '1' } : {}),
+  });
   const files = (await glob('**/*.e2e.js', { cwd: __dirname })).sort();
   files.forEach((f) => mocha.addFile(path.resolve(__dirname, f)));
   // On any failure, print what the panel was showing: the assertion alone

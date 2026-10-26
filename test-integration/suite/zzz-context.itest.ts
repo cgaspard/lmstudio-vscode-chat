@@ -110,7 +110,7 @@ describe('context window e2e (live LM Studio)', function () {
     }
     assert.ok(
       (await text('.model-btn-label'))?.startsWith(target.name),
-      `the panel should come up on ${target.name} (is bin/opencode present?), ` +
+      `the panel should come up on ${target.name} (is opencode-sdk/ built?), ` +
         `got "${await text('.model-btn-label')}"`,
     );
   });

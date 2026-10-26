@@ -138,7 +138,7 @@ describe('polling e2e (issue #7)', function () {
     await waitUntil(
       () => fake.countSince('/api/v1/models', 0) >= 1,
       60_000,
-      'the extension to list models from the fake server (is bin/opencode present?)',
+      'the extension to list models from the fake server (is opencode-sdk/ built?)',
     );
     await waitFor('#model-btn', (n) => n === 1, 10_000);
   });

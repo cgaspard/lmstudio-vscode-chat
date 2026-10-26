@@ -1,0 +1,1 @@
+Step 4 of 5. Use the shell tool to run the command `sleep 3`. When it has finished, use the read tool on steps/5.txt and do what it says.

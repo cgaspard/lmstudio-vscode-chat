@@ -6,12 +6,16 @@ import { assistantText, ask, busy, freshChat, h, send, turn, until } from './lib
 describe('e2e · steering, stopping, questions, goals', function () {
   it('a message sent mid-turn steers the running task', async () => {
     await freshChat();
-    await send('Use the shell tool to run the command `sleep 2` five times, as five separate tool calls, one after another. After the fifth, reply with exactly: ALL-FIVE-DONE');
+    // Steering lands at the agent's next step, so the task must take several
+    // steps that cannot be batched: each file names the next one (steps/1..5,
+    // with a short sleep between), ten tool calls in all.
+    await send('Use the read tool on steps/1.txt and do what it says.');
     await until(async () => (await h.count('.msg.assistant .part-tool')) > 0, 240_000, 'the first tool call');
-    await send('Stop. Run no more commands. Reply with exactly: STEERED-OK');
+    await send('Stop. Run no more commands and read no more files. Reply with exactly: STEERED-OK');
     await until(async () => /STEERED-OK/.test(await assistantText()), 240_000, 'the steer to take effect');
     await turn();
-    assert.ok((await h.count('.msg.assistant .part-tool')) < 5, 'the steer cut the task short');
+    const tools = await h.count('.msg.assistant .part-tool');
+    assert.ok(tools < 10, `the steer cut the task short (${tools} of 10 tool calls)`);
     assert.doesNotMatch(await assistantText(), /ALL-FIVE-DONE/);
   });
 
