@@ -25,9 +25,10 @@ export function activate(context: vscode.ExtensionContext): void {
   // not). Consumers that spawn OpenCode re-resolve it themselves; this only
   // narrows the window where the shared client is keyless.
   void servers.apiKeyFor(servers.active().id).then((key) => lmStudio.setApiKey(key));
-  // Bundled binary lives under the extension dir; the managed server's on-disk
-  // state is sandboxed under globalStorage so it never collides with a user's
-  // own OpenCode install.
+  // The embedded engine ships under the extension dir (opencode-sdk/); its
+  // on-disk state is sandboxed under globalStorage so it never collides with a
+  // user's own OpenCode install. The path is the one the 1.x server used, so
+  // chat history carries over.
   const dataDir = vscode.Uri.joinPath(context.globalStorageUri, 'opencode').fsPath;
   server = new OpencodeServerManager(cfg, lmStudio, context.extensionPath, dataDir);
 
@@ -99,15 +100,13 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (
         e.affectsConfiguration('lmstudioCode.lmStudioBaseUrl') ||
-        e.affectsConfiguration('lmstudioCode.opencodePath') ||
-        e.affectsConfiguration('lmstudioCode.serverPort') ||
-        // MCP servers are baked into the injected config at spawn time, so a
-        // change to ours — or VS Code's shared `mcp` setting — needs a respawn
+        // MCP servers are baked into the engine's config when it starts, so a
+        // change to ours — or VS Code's shared `mcp` setting — needs a restart
         // to take effect. (On-disk .mcp.json / .vscode/mcp.json edits are picked
         // up by the "Restart OpenCode Server" command.)
         e.affectsConfiguration('lmstudioCode.mcpServers') ||
         e.affectsConfiguration('mcp') ||
-        // The permission ruleset is baked into the injected config at spawn.
+        // The permission ruleset is baked into the engine's config at start.
         e.affectsConfiguration('lmstudioCode.permissionMode')
       ) {
         log('relevant configuration changed; restarting server on next use');

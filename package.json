@@ -6,7 +6,6 @@
   "publisher": "cgaspard",
   "license": "MIT",
   "icon": "media/icon.png",
-  "opencodeVersion": "1.19.4",
   "engines": {
     "vscode": "^1.104.0"
   },
@@ -109,16 +108,6 @@
           "type": "string",
           "default": "http://127.0.0.1:1234/v1",
           "description": "Base URL of the LM Studio OpenAI-compatible server (must end in /v1)."
-        },
-        "lmstudioCode.opencodePath": {
-          "type": "string",
-          "default": "",
-          "description": "Override path to an opencode binary. Leave empty to use the binary bundled with this extension (OpenCode 1.x). A system-wide OpenCode install is not used automatically, so upgrading it (e.g. to OpenCode 2, which this extension does not support yet) cannot break the panel."
-        },
-        "lmstudioCode.serverPort": {
-          "type": "number",
-          "default": 0,
-          "description": "Port for the embedded OpenCode server. 0 = pick a free port automatically."
         },
         "lmstudioCode.defaultModel": {
           "type": "string",
@@ -256,15 +245,15 @@
     "check-types:test": "tsc -p tsconfig.test.json",
     "watch": "node esbuild.js --watch",
     "package": "npm run check-types && node esbuild.js --production",
-    "bundle:opencode": "node scripts/fetch-opencode.js",
+    "bundle:opencode-sdk": "node scripts/build-opencode-sdk.js",
     "package:vsix": "vsce package",
-    "package:vsix:bundled": "npm run bundle:opencode && vsce package --target ${VSCE_TARGET:-$(node -p \"process.platform+'-'+process.arch\")}",
+    "package:vsix:bundled": "npm run bundle:opencode-sdk -- ${VSCE_TARGET:-$(node -p \"process.platform+'-'+process.arch\")} && vsce package --target ${VSCE_TARGET:-$(node -p \"process.platform+'-'+process.arch\")}",
     "test": "npm run check-types:test && node esbuild.test.js && node --test \"out-test/**/*.test.js\"",
     "test:watch": "node esbuild.test.js && node --test --watch \"out-test/**/*.test.js\"",
     "compile:integration": "tsc -p tsconfig.integration.json",
     "test:integration": "npm run compile && npm run compile:integration && node out-integration/test-integration/runTests.js",
-    "bundle:opencode-sdk": "node scripts/build-opencode-sdk.js",
-    "test:live": "node test-live/run.js"
+    "test:live": "node test-live/run.js",
+    "test:e2e": "npm run compile && npm run compile:integration && node out-integration/test-integration/e2e/runE2E.js"
   },
   "dependencies": {
     "marked": "^12.0.0"

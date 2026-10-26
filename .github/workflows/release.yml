@@ -78,10 +78,11 @@ jobs:
           draft: false
           prerelease: ${{ steps.ver.outputs.prerelease == 'true' }}
 
-  # One leg per VS Code platform target: fetch the matching OpenCode binary,
-  # package a platform-specific VSIX, attach it to the Release, and publish it.
-  # All targets package fine on Linux — fetching is just download + untar, and
-  # vsce preserves the Unix exec bit through the zip.
+  # One leg per VS Code platform target: build the embedded OpenCode engine with
+  # that target's native modules, package a platform-specific VSIX, attach it
+  # to the Release, and publish it.
+  # All targets build fine on Linux — the JS bundle is platform-neutral and the
+  # natives are installed with npm --os/--cpu/--libc for the target.
   release:
     needs: prepare
     runs-on: ubuntu-latest
@@ -114,8 +115,8 @@ jobs:
       - name: Compile
         run: npm run compile
 
-      - name: Fetch bundled OpenCode binary for ${{ matrix.target }}
-        run: node scripts/fetch-opencode.js ${{ matrix.target }}
+      - name: Build the embedded OpenCode engine for ${{ matrix.target }}
+        run: node scripts/build-opencode-sdk.js ${{ matrix.target }}
 
       - name: Package ${{ matrix.target }} .vsix
         run: |
@@ -128,18 +129,27 @@ jobs:
           # Stable versionless per-platform mirror for predictable download URLs.
           cp "lmstudio-code-${{ matrix.target }}-${VER}.vsix" "lmstudio-code-${{ matrix.target }}.vsix"
 
-      - name: Verify the VSIX actually bundled the binary
+      - name: Verify the VSIX bundled the engine for ${{ matrix.target }}
         run: |
           VER="${{ needs.prepare.outputs.version }}"
           VSIX="lmstudio-code-${{ matrix.target }}-${VER}.vsix"
-          EXE="extension/bin/opencode"
-          case "${{ matrix.target }}" in win32-*) EXE="extension/bin/opencode.exe" ;; esac
-          SIZE=$(unzip -l "$VSIX" "$EXE" | awk -v f="$EXE" '$4==f {print $1}')
+          SDK="extension/opencode-sdk/sdk.mjs"
+          SIZE=$(unzip -l "$VSIX" "$SDK" | awk -v f="$SDK" '$4==f {print $1}')
           if [ -z "$SIZE" ] || [ "$SIZE" -lt 1000000 ]; then
-            echo "::error::$VSIX is missing $EXE or it is too small ($SIZE bytes)"
+            echo "::error::$VSIX is missing $SDK or it is too small ($SIZE bytes)"
             exit 1
           fi
-          echo "OK: $EXE present in $VSIX ($SIZE bytes)"
+          # The engine cannot start without its target's native modules.
+          T="${{ matrix.target }}"; OS="${T%-*}"; CPU="${T#*-}"; LIBC=""
+          [ "$OS" = "linux" ] && LIBC="-glibc"
+          for NATIVE in "@parcel/watcher-${OS}-${CPU}${LIBC}" "@lydell/node-pty-${OS}-${CPU}"; do
+            if ! unzip -l "$VSIX" | grep -q "extension/opencode-sdk/node_modules/${NATIVE}/package.json"; then
+              echo "::error::$VSIX is missing the native package ${NATIVE}"
+              exit 1
+            fi
+          done
+          unzip -l "$VSIX" | grep -q "extension/opencode-sdk/LICENSE.opencode" || { echo "::error::$VSIX is missing the OpenCode license notice"; exit 1; }
+          echo "OK: engine ($SIZE bytes) + ${T} natives + license in $VSIX"
 
       - name: Upload VSIX to the GitHub Release
         uses: softprops/action-gh-release@v2

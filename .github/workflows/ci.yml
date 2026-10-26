@@ -26,16 +26,20 @@ jobs:
       - run: npm test
       # Bundle one representative target so the dev VSIX is a real, runnable
       # package (matches what Release produces). linux-x64 keeps CI fast.
-      - run: node scripts/fetch-opencode.js linux-x64
+      - run: node scripts/build-opencode-sdk.js linux-x64
       - run: npx vsce package --target linux-x64 --out lmstudio-code-dev.vsix
-      - name: Verify the dev VSIX bundled the binary
+      - name: Verify the dev VSIX bundled the engine
         run: |
-          SIZE=$(unzip -l lmstudio-code-dev.vsix extension/bin/opencode | awk '$4=="extension/bin/opencode" {print $1}')
+          VSIX=lmstudio-code-dev.vsix
+          SIZE=$(unzip -l "$VSIX" extension/opencode-sdk/sdk.mjs | awk '$4=="extension/opencode-sdk/sdk.mjs" {print $1}')
           if [ -z "$SIZE" ] || [ "$SIZE" -lt 1000000 ]; then
-            echo "::error::dev VSIX is missing extension/bin/opencode or it is too small ($SIZE bytes)"
+            echo "::error::dev VSIX is missing extension/opencode-sdk/sdk.mjs or it is too small ($SIZE bytes)"
             exit 1
           fi
-          echo "OK: opencode bundled ($SIZE bytes)"
+          for NATIVE in @parcel/watcher-linux-x64-glibc @lydell/node-pty-linux-x64; do
+            unzip -l "$VSIX" | grep -q "extension/opencode-sdk/node_modules/${NATIVE}/package.json" || { echo "::error::dev VSIX is missing ${NATIVE}"; exit 1; }
+          done
+          echo "OK: engine bundled ($SIZE bytes) with linux-x64 natives"
       - uses: actions/upload-artifact@v4
         with:
           name: lmstudio-code-dev-vsix

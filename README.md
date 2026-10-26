@@ -39,7 +39,9 @@ Powered by the open-source [**OpenCode**](https://opencode.ai) agent, bundled ri
 
 ## Steer it mid-flight
 
-Type while the agent is working and hit Enter — your instructions get injected at its next step, so it adjusts work already in progress instead of you stopping and starting over. The stop button still stops.
+Type while the agent is working and hit **Enter** — your message is handed to it at its next step, so it adjusts work already in progress instead of you stopping and starting over. Hit **⌥/Alt+Enter** instead to **queue** it for when the current turn finishes.
+
+Messages waiting to be picked up sit above the composer, marked *Steering* or *Queued*: switch one between the two, or cancel it before the agent ever sees it. Each lands in the conversation at the moment the agent actually reads it, so the transcript stays in the order the model saw things. The stop button still stops.
 
 ## Your models, your machine
 
@@ -91,7 +93,9 @@ The panel lives in the Activity Bar (or the secondary side bar). The composer ke
 - **[LM Studio](https://lmstudio.ai)** running with its local server started (default `http://127.0.0.1:1234`) and at least one chat model
 - *(recommended)* the **`lms` CLI** for automatic context-window management
 
-> **[OpenCode](https://opencode.ai) is bundled** — the matching platform binary ships inside the extension, so there's nothing extra to install and it works offline. Power users can point at their own build with `lmstudioCode.opencodePath`. An OpenCode install elsewhere on your machine is never picked up automatically — the panel always runs the version it was tested with (OpenCode 2 is not supported yet).
+> **[OpenCode](https://opencode.ai) 2 runs inside the extension** — there is no separate server to install, start or stop, no port, and nothing left running when VS Code closes. It works offline. An OpenCode install elsewhere on your machine (yours, Homebrew's) is never used and never affected: the panel keeps its own sessions and settings.
+>
+> OpenCode is MIT-licensed by [anomalyco/opencode](https://github.com/anomalyco/opencode); its notice ships with the extension as `opencode-sdk/LICENSE.opencode`. This extension is an independent project and is not affiliated with or endorsed by the OpenCode maintainers.
 
 ### Beta channel
 
@@ -106,8 +110,6 @@ any time with **Switch to Release Version**.
 | Setting | Default | Description |
 | --- | --- | --- |
 | `lmstudioCode.lmStudioBaseUrl` | `http://127.0.0.1:1234/v1` | LM Studio OpenAI-compatible base URL |
-| `lmstudioCode.opencodePath` | _(bundled)_ | Override path to an `opencode` 1.x binary; empty uses the bundled one |
-| `lmstudioCode.serverPort` | `0` | Embedded server port (0 = auto) |
 | `lmstudioCode.defaultModel` | _(first)_ | Default model id |
 | `lmstudioCode.agent` | `build` | `build` or `plan` |
 | `lmstudioCode.autoEnsureContext` | `true` | Reload model with adequate context before prompting |
@@ -207,33 +209,51 @@ Each row shows the transport (local/remote) and the command or URL it was config
 VS Code webview (chat UI)
         │  postMessage
         ▼
-Extension host (bridge)
-        │  HTTP + SSE  (raw fetch)
+Extension host ─ bridge
+        │  in-process calls + event stream
         ▼
-opencode serve   ──OpenAI /v1──▶  LM Studio (local model)
-   (headless, config injected via OPENCODE_CONFIG_CONTENT)
+OpenCode 2 (@opencode/sdk,   ──OpenAI /v1──▶  LM Studio (local model)
+  embedded, no server)
 ```
 
-The LM Studio provider is injected into OpenCode at launch via the
-`OPENCODE_CONFIG_CONTENT` environment variable — **nothing is written to your
-workspace or global config.** Discovered LM Studio models are declared in the
-provider's `models` map (OpenCode requires this for custom OpenAI-compatible
-providers).
+OpenCode runs inside the extension host through its embedding SDK — no
+process, no port, no password. The LM Studio provider is handed to it in memory
+when it starts — **nothing is written to your workspace or global config**, and
+it is the only provider enabled (a key exported in your shell, or OpenCode's own
+LM Studio auto-discovery, is never picked up behind your back). Discovered LM
+Studio models are declared in the provider's `models` map with the context
+window LM Studio actually loaded and their vision and reasoning settings. Its
+sessions, database and settings live in the extension's own storage, isolated
+from any OpenCode you run yourself; chats from earlier versions carry over.
+
+A server's API key never sits in the config text: it is written to a `0600`
+file and referenced with OpenCode's `{file:…}` placeholder, which the engine
+resolves at load.
 
 ## Develop from source
 
 ```bash
 npm install
-npm run bundle:opencode      # fetch the pinned OpenCode binary into bin/ for your platform
+npm run bundle:opencode-sdk  # build the embedded OpenCode engine into opencode-sdk/ for your platform
 npm run compile              # type-check + bundle (extension + webview)
 # then press F5 in VS Code to launch the Extension Development Host
-npm run package:vsix:bundled # build a platform .vsix with the binary embedded
+npm test                     # unit tests
+npm run test:integration     # drives the real webview in a VS Code instance
+npm run test:live            # the engine against LM Studio on :1234
+npm run test:e2e             # every feature through the panel, against LM Studio on :1234
+npm run package:vsix:bundled # build a platform .vsix with the engine embedded
 ```
 
-The OpenCode binary is fetched at build time (pinned by `opencodeVersion` in
-`package.json`) and is never committed — `bin/` is git-ignored. Bump that field
-to upgrade the bundled OpenCode. F5 also resolves the binary from `bin/`, so run
-`bundle:opencode` once before launching the dev host.
+The engine is built from `@opencode/sdk`, pinned to an exact version in
+`devDependencies` — its API is still marked experimental, so upgrades are
+deliberate. `opencode-sdk/` is generated and git-ignored; run
+`bundle:opencode-sdk` once before launching the dev host, and again after
+changing the pinned version.
+
+`test:e2e` needs a tool-capable vision model (default
+`qwen3-vl-30b-a3b-instruct-mlx`) and a reasoning model (default
+`qwen/qwen3.8-27b`) in LM Studio; override with `E2E_BASE_URL`, `E2E_MODEL` and
+`E2E_REASONING_MODEL`.
 
 ## License
 

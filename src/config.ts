@@ -15,8 +15,6 @@ function normalizeEffort(value: unknown): EffortLevel {
 
 export interface ExtensionConfig {
   lmStudioBaseUrl: string;
-  opencodePath: string;
-  serverPort: number;
   defaultModel: string;
   /** Default agent name. Free-form: user-defined agents are discovered at runtime. */
   agent: string;
@@ -27,7 +25,7 @@ export interface ExtensionConfig {
   healthCheckSeconds: number;
   /** Starting reasoning effort for models with no per-model choice stored. */
   defaultThinkingEffort: EffortLevel;
-  /** Tool-approval posture baked into the OpenCode config at spawn. */
+  /** Tool-approval posture baked into the engine's config at start. */
   permissionMode: PermissionMode;
 }
 
@@ -40,8 +38,6 @@ export function getConfig(): ExtensionConfig {
   }
   return {
     lmStudioBaseUrl: baseUrl,
-    opencodePath: (cfg.get<string>('opencodePath') ?? '').trim(),
-    serverPort: cfg.get<number>('serverPort') ?? 0,
     defaultModel: (cfg.get<string>('defaultModel') ?? '').trim(),
     agent: (cfg.get<string>('agent') ?? 'build').trim() || 'build',
     autoEnsureContext: cfg.get<boolean>('autoEnsureContext') ?? true,
