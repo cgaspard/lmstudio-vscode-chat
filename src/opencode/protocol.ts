@@ -1,5 +1,6 @@
-// Types mirroring the subset of the OpenCode HTTP API (v1.2.x) that this
-// extension uses. Derived from the server's OpenAPI 3.1 spec (`GET /doc`).
+// The 1.x-shaped types the bridge and webview are written against. The embedded
+// OpenCode 2 engine speaks a different vocabulary; src/opencode/translate.ts and
+// v2client.ts map it onto these, so the UI keeps one event and message model.
 
 export interface ModelRef {
   providerID: string;
@@ -17,10 +18,35 @@ export interface Session {
   time: { created: number; updated: number };
 }
 
+/**
+ * One model as the engine's catalog describes it (the v2 client maps the
+ * embedded engine's model list onto this 1.x shape). Kept loose: a field the
+ * engine adds later must never break parsing.
+ */
+export interface ProviderModelInfo {
+  id?: string;
+  name?: string;
+  family?: string;
+  capabilities?: {
+    reasoning?: boolean;
+    toolcall?: boolean;
+    attachment?: boolean;
+    temperature?: boolean;
+    input?: { text?: boolean; image?: boolean; audio?: boolean; pdf?: boolean; video?: boolean };
+    output?: { text?: boolean; image?: boolean; audio?: boolean };
+  };
+  /** USD per million tokens. */
+  cost?: { input?: number; output?: number; cache?: { read?: number; write?: number } };
+  limit?: { context?: number; input?: number; output?: number };
+  /** Reasoning-effort variants, keyed by the name to send as `PromptBody.variant`. */
+  variants?: Record<string, unknown>;
+  status?: string;
+}
+
 export interface ProviderInfo {
   id: string;
   name: string;
-  models: Record<string, { name?: string }>;
+  models: Record<string, ProviderModelInfo>;
 }
 
 export interface ProvidersResponse {

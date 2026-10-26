@@ -262,12 +262,15 @@
     "test": "npm run check-types:test && node esbuild.test.js && node --test \"out-test/**/*.test.js\"",
     "test:watch": "node esbuild.test.js && node --test --watch \"out-test/**/*.test.js\"",
     "compile:integration": "tsc -p tsconfig.integration.json",
-    "test:integration": "npm run compile && npm run compile:integration && node out-integration/test-integration/runTests.js"
+    "test:integration": "npm run compile && npm run compile:integration && node out-integration/test-integration/runTests.js",
+    "bundle:opencode-sdk": "node scripts/build-opencode-sdk.js",
+    "test:live": "node test-live/run.js"
   },
   "dependencies": {
     "marked": "^12.0.0"
   },
   "devDependencies": {
+    "@opencode/sdk": "2.1.4",
     "@types/mocha": "^10.0.10",
     "@types/node": "^20.11.0",
     "@types/vscode": "^1.104.0",

@@ -18,3 +18,7 @@ sample-workspace/.opencode/**/node_modules/
 
 # Graphoxide code-graph output, regenerated on demand.
 /graphoxide-out/
+
+# Embedded OpenCode engine, built by scripts/build-opencode-sdk.js at package time.
+/opencode-sdk/
+out-live/

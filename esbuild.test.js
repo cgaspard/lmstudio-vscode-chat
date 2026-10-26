@@ -19,6 +19,9 @@ if (!entryPoints.length) {
 
 (async () => {
   try {
+    // Start clean: a test whose source was deleted must not keep running from a
+    // stale out-test/*.js.
+    fs.rmSync(path.join(__dirname, 'out-test'), { recursive: true, force: true });
     await esbuild.build({
       entryPoints,
       outdir: 'out-test',

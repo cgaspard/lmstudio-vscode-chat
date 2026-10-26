@@ -42,6 +42,8 @@ tsconfig.integration.json
 .mcp.json
 opencode.json
 graphoxide-out/**
+test-live/**
+out-live/**
 
 # Stray screenshots and scratch images dropped at the repo root must never
 # reach the Marketplace — packaged media lives under media/.
