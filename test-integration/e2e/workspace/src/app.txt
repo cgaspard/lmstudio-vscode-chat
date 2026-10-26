@@ -1,0 +1,3 @@
+// e2e fixture — the agent reads and edits this file.
+version = v1
+codeword = BANANA-17

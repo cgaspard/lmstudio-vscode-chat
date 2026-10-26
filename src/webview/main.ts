@@ -3886,11 +3886,20 @@ function installTestHook(): void {
         const type = m.type as string | undefined;
         reply({ messages: postedForTest.filter((x) => !type || x.type === type) });
       } else if (m.__test__ === 'addImage') {
-        // Attach an image through the same path a paste or drop takes.
-        void fetch(String(m.dataUrl))
-          .then((r) => r.blob())
-          .then((blob) => addImage(new File([blob], String(m.name ?? 'image.png'), { type: blob.type })))
-          .then(() => reply({ ok: true, pending: state.pendingImages.length }));
+        // Attach an image through the same path a paste or drop takes. Decoded
+        // by hand: the webview's CSP (default-src 'none') blocks fetch() of a
+        // data: URL.
+        const url = String(m.dataUrl);
+        const comma = url.indexOf(',');
+        const type = /^data:([^;,]+)/.exec(url)?.[1] ?? 'application/octet-stream';
+        const bin = atob(url.slice(comma + 1));
+        const bytes = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) {
+          bytes[i] = bin.charCodeAt(i);
+        }
+        void addImage(new File([bytes], String(m.name ?? 'image.png'), { type })).then(() =>
+          reply({ ok: true, pending: state.pendingImages.length }),
+        );
         return;
       } else if (m.__test__ === 'postToHost') {
         // Send a message exactly as one of the webview's own controls would

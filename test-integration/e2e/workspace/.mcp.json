@@ -1,0 +1,5 @@
+{
+  "mcpServers": {
+    "e2e-echo": { "command": "node", "args": ["tools/mcp-echo.js"] }
+  }
+}
