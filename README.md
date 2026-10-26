@@ -91,7 +91,7 @@ The panel lives in the Activity Bar (or the secondary side bar). The composer ke
 - **[LM Studio](https://lmstudio.ai)** running with its local server started (default `http://127.0.0.1:1234`) and at least one chat model
 - *(recommended)* the **`lms` CLI** for automatic context-window management
 
-> **[OpenCode](https://opencode.ai) is bundled** — the matching platform binary ships inside the extension, so there's nothing extra to install and it works offline. Power users can point at their own build with `lmstudioCode.opencodePath`; an install on your `PATH` or in `~/.opencode/bin` is preferred over the bundled copy if present.
+> **[OpenCode](https://opencode.ai) is bundled** — the matching platform binary ships inside the extension, so there's nothing extra to install and it works offline. Power users can point at their own build with `lmstudioCode.opencodePath`. An OpenCode install elsewhere on your machine is never picked up automatically — the panel always runs the version it was tested with (OpenCode 2 is not supported yet).
 
 ### Beta channel
 
@@ -106,7 +106,7 @@ any time with **Switch to Release Version**.
 | Setting | Default | Description |
 | --- | --- | --- |
 | `lmstudioCode.lmStudioBaseUrl` | `http://127.0.0.1:1234/v1` | LM Studio OpenAI-compatible base URL |
-| `lmstudioCode.opencodePath` | _(bundled)_ | Override path to an `opencode` binary; empty uses your own install (PATH / `~/.opencode`) or the bundled one |
+| `lmstudioCode.opencodePath` | _(bundled)_ | Override path to an `opencode` 1.x binary; empty uses the bundled one |
 | `lmstudioCode.serverPort` | `0` | Embedded server port (0 = auto) |
 | `lmstudioCode.defaultModel` | _(first)_ | Default model id |
 | `lmstudioCode.agent` | `build` | `build` or `plan` |

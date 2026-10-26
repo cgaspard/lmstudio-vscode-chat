@@ -1,11 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { resolveBinaryPath } from '../src/core/binary';
+import { isSupportedOpencodeVersion, resolveBinaryPath } from '../src/core/binary';
 
 const base = {
   overridePath: '',
-  userCandidates: ['/home/u/.opencode/bin/opencode', '/opt/homebrew/bin/opencode'],
-  onPath: null as string | null,
   bundled: '/ext/bin/opencode',
   exists: () => false,
 };
@@ -14,49 +12,32 @@ test('explicit override wins when it exists', () => {
   const got = resolveBinaryPath({
     ...base,
     overridePath: '/custom/opencode',
-    onPath: '/usr/bin/opencode',
-    exists: (p) => p === '/custom/opencode' || p === '/home/u/.opencode/bin/opencode',
+    exists: (p) => p === '/custom/opencode',
   });
   assert.equal(got, '/custom/opencode');
 });
 
-test('a non-existent override is ignored and falls through', () => {
-  const got = resolveBinaryPath({
-    ...base,
-    overridePath: '/missing/opencode',
-    exists: (p) => p === '/opt/homebrew/bin/opencode',
-  });
-  assert.equal(got, '/opt/homebrew/bin/opencode');
+test('a non-existent override is ignored and falls back to the bundled binary', () => {
+  const got = resolveBinaryPath({ ...base, overridePath: '/missing/opencode' });
+  assert.equal(got, '/ext/bin/opencode');
 });
 
-test('a user install is preferred over the bundled binary', () => {
-  const got = resolveBinaryPath({
-    ...base,
-    exists: (p) => p === '/home/u/.opencode/bin/opencode',
-  });
-  assert.equal(got, '/home/u/.opencode/bin/opencode');
-});
-
-test('PATH result is used when no known candidate exists', () => {
-  const got = resolveBinaryPath({ ...base, onPath: '/usr/local/bin/opencode' });
-  assert.equal(got, '/usr/local/bin/opencode');
-});
-
-test('PATH is preferred over the bundled binary', () => {
-  const got = resolveBinaryPath({
-    ...base,
-    onPath: '/usr/local/bin/opencode',
-    bundled: '/ext/bin/opencode',
-  });
-  assert.equal(got, '/usr/local/bin/opencode');
-});
-
-test('bundled binary is the fallback when nothing else is found', () => {
-  const got = resolveBinaryPath({ ...base });
+test('the bundled binary is used when no override is set, whatever else is installed', () => {
+  // A Homebrew / PATH install is never consulted: it may be OpenCode 2.
+  const got = resolveBinaryPath({ ...base, exists: () => true });
   assert.equal(got, '/ext/bin/opencode');
 });
 
 test('returns null when every option fails (corrupt install)', () => {
   const got = resolveBinaryPath({ ...base, bundled: null });
   assert.equal(got, null);
+});
+
+test('only OpenCode 1.x version output counts as supported', () => {
+  assert.equal(isSupportedOpencodeVersion('1.19.4'), true);
+  assert.equal(isSupportedOpencodeVersion('1.18.26'), true);
+  assert.equal(isSupportedOpencodeVersion('opencode v2.1.4'), false);
+  assert.equal(isSupportedOpencodeVersion('3.0.0'), false);
+  // Unreadable output gets the benefit of the doubt.
+  assert.equal(isSupportedOpencodeVersion(''), true);
 });

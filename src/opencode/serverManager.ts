@@ -1,11 +1,11 @@
-import { ChildProcess, spawn } from 'node:child_process';
+import { ChildProcess, execFile, spawn } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import * as vscode from 'vscode';
 import { ExtensionConfig, getConfig } from '../config';
-import { resolveBinaryPath } from '../core/binary';
+import { isSupportedOpencodeVersion, resolveBinaryPath } from '../core/binary';
 import { opencodeContextLimit } from '../core/context';
 import { variantsForModel } from '../core/effort';
 import { HOST_XDG_ENV, hostXdgForChildren, snapshotHostXdg, withHostXdg } from '../core/hostenv';
@@ -128,13 +128,25 @@ export class OpencodeServerManager {
     );
     this.proc = proc;
 
-    const baseUrl = await this.awaitListening(proc);
+    let baseUrl: string;
+    let client: OpencodeClient;
+    try {
+      baseUrl = await this.awaitListening(proc);
+      log(`opencode server listening at ${baseUrl}`);
+      client = new OpencodeClient(baseUrl);
+      // Confirm health before declaring ready.
+      await this.waitHealthy(client);
+    } catch (err) {
+      // A server that is listening but never healthy keeps running, and every
+      // retry spawns another — kill this one before the caller tries again.
+      this.killed.add(proc);
+      proc.kill();
+      if (this.proc === proc) {
+        this.proc = undefined;
+      }
+      throw err;
+    }
     this.baseUrl = baseUrl;
-    log(`opencode server listening at ${baseUrl}`);
-
-    const client = new OpencodeClient(baseUrl);
-    // Confirm health before declaring ready.
-    await this.waitHealthy(client);
     this.client = client;
     this.bakedIdentity = bakedIdentity;
 
@@ -443,43 +455,37 @@ export class OpencodeServerManager {
   }
 
   /**
-   * Find the opencode binary, in precedence order:
-   *   1. `lmstudioCode.opencodePath` setting (explicit user override)
-   *   2. a user's own install (~/.opencode, Homebrew, PATH) — lets power users
-   *      run a newer/custom build than the one we ship
-   *   3. the binary bundled in the VSIX (the guaranteed offline default)
-   * Returns null only if every option fails (corrupt install / bad override).
-   * (Precedence itself lives in the pure `resolveBinaryPath` for testability.)
+   * Find the opencode binary: the `lmstudioCode.opencodePath` override if set
+   * and present, otherwise the binary bundled in the VSIX. A user's own install
+   * is never picked up implicitly — see `resolveBinaryPath`.
+   * Returns null only if both fail (corrupt install / bad override).
    */
   private async resolveBinary(): Promise<string | null> {
-    const home = os.homedir();
-    const userCandidates =
-      process.platform === 'win32'
-        ? [path.join(home, '.opencode', 'bin', 'opencode.exe')]
-        : [
-            path.join(home, '.opencode', 'bin', 'opencode'),
-            '/opt/homebrew/bin/opencode',
-            '/usr/local/bin/opencode',
-          ];
-    return resolveBinaryPath({
-      overridePath: this.cfg.opencodePath,
-      userCandidates,
-      onPath: await this.whichOpencode(),
+    // Read fresh: the cfg snapshot is from activation, so a changed override
+    // would otherwise only apply after a window reload.
+    const overridePath = getConfig().opencodePath;
+    const bin = resolveBinaryPath({
+      overridePath,
       bundled: this.bundledBinary(),
       exists: (p) => fs.existsSync(p),
     });
+    if (bin && bin === overridePath) {
+      const version = await this.binaryVersion(bin);
+      if (!isSupportedOpencodeVersion(version)) {
+        logError(
+          `opencodePath points at ${version}; only OpenCode 1.x is supported, so the server will not become healthy. Clear the setting to use the bundled binary.`,
+          bin,
+        );
+      }
+    }
+    return bin;
   }
 
-  /** Resolve `opencode` from PATH via which/where, or null if absent. */
-  private whichOpencode(): Promise<string | null> {
-    return new Promise<string | null>((resolve) => {
-      const which = process.platform === 'win32' ? 'where' : 'which';
-      const child = spawn(which, ['opencode']);
-      let out = '';
-      child.stdout.on('data', (d) => (out += d.toString()));
-      child.on('error', () => resolve(null));
-      child.on('close', (code) =>
-        resolve(code === 0 && out.trim() ? out.trim().split('\n')[0] : null),
+  /** `<bin> --version` output, or '' if it can't be run (treated as supported). */
+  private binaryVersion(bin: string): Promise<string> {
+    return new Promise<string>((resolve) => {
+      execFile(bin, ['--version'], { timeout: 5000 }, (err, stdout) =>
+        resolve(err ? '' : stdout.trim()),
       );
     });
   }

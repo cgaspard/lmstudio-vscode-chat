@@ -1,14 +1,22 @@
 // Pure resolution of the opencode binary path, independent of vscode/fs so it
-// can be unit-tested. serverManager wires the real `fs.existsSync`, PATH lookup,
-// and candidate paths into this.
+// can be unit-tested. serverManager wires the real `fs.existsSync` and the
+// bundled path into this.
+
+/**
+ * Whether `opencode --version` output names a release this extension can drive.
+ * OpenCode 2 replaced the v1 HTTP API we speak (`/global/health`, `/session`,
+ * `/config/providers`, …) with a password-gated `/api/*` surface: its server
+ * starts and listens, then answers every v1 route with the web UI's index.html.
+ * Unreadable output gets the benefit of the doubt and counts as supported.
+ */
+export function isSupportedOpencodeVersion(versionOutput: string): boolean {
+  const m = versionOutput.match(/(\d+)\.\d+\.\d+/);
+  return !m || Number(m[1]) < 2;
+}
 
 export interface BinaryResolverInputs {
   /** `lmstudioCode.opencodePath` setting, or '' if unset. */
   overridePath: string;
-  /** Known user-install locations to probe, in order. */
-  userCandidates: string[];
-  /** Result of a PATH lookup (which/where opencode), or null. */
-  onPath: string | null;
   /** The binary bundled in the VSIX, or null if missing. */
   bundled: string | null;
   /** Existence predicate (injected so tests stay filesystem-free). */
@@ -16,23 +24,18 @@ export interface BinaryResolverInputs {
 }
 
 /**
- * Resolve the opencode binary in precedence order:
+ * Resolve the opencode binary:
  *   1. explicit override (`opencodePath`) if it exists
- *   2. a user's own install (known locations, then PATH)
- *   3. the bundled binary (guaranteed offline default)
- * Returns null only when every option fails.
+ *   2. the bundled binary — the version this extension is built and tested
+ *      against
+ * A user's own install (PATH, Homebrew, ~/.opencode) is deliberately never
+ * picked up on its own: the client is tied to one server API, so upgrading
+ * OpenCode elsewhere (e.g. Homebrew moving to OpenCode 2) must not change
+ * what the panel runs. Returns null only when both fail.
  */
 export function resolveBinaryPath(inp: BinaryResolverInputs): string | null {
   if (inp.overridePath && inp.exists(inp.overridePath)) {
     return inp.overridePath;
-  }
-  for (const c of inp.userCandidates) {
-    if (inp.exists(c)) {
-      return c;
-    }
-  }
-  if (inp.onPath) {
-    return inp.onPath;
   }
   return inp.bundled;
 }
