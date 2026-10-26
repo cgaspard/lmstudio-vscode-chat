@@ -54,7 +54,14 @@ describe('e2e · LM Studio', function () {
 
   it('Load in the model picker loads the model at the requested window', async () => {
     await freshChat();
-    await setMinContext(16384);
+    // Ask for 16K through the picker's own "Context on load" control. The
+    // selected (big, already loaded) model has more than that, so nothing
+    // reloads; the request applies to the next load.
+    await openModelMenu();
+    await until(async () => (await h.count('#ctx-presets .ctx-preset[data-tokens="16384"]')) > 0, 10_000, 'the presets');
+    await h.click('#ctx-presets .ctx-preset[data-tokens="16384"]');
+    await until(async () => cfg().get('minContextLength') === 16384, 10_000, 'the 16K request to be saved');
+    await closeModelMenu();
     if ((await small()).loaded) {
       // Someone left it loaded: eject it through the picker first.
       const { index } = await smallAction();
@@ -120,7 +127,7 @@ describe('e2e · LM Studio', function () {
     const rows = await h.allText('#server-menu-list .model-row');
     const second = rows.findIndex((r) => /E2E Second/.test(r));
     assert.ok(second >= 0, `the server is listed (${rows.join(' | ')})`);
-    assert.match(rows[second], /\bkey\b/, 'it shows that a key is stored');
+    assert.strictEqual(await h.count('#server-menu-list .model-row .server-key-badge'), 1, 'it shows that a key is stored');
     // Switching servers recreates the engine with that server's URL and key.
     await h.click('#server-menu-list .model-row', second);
     await until(async () => /E2E Second\s*·\s*active/.test((await h.allText('#server-menu-list .model-row'))[second] ?? ''), 60_000, 'the switch');
