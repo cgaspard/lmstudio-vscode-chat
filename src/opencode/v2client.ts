@@ -29,6 +29,9 @@ const COMPACT_TIMEOUT_MS = 900000;
 /** Ceiling for one SDK call, as the 1.x HTTP client had per request. */
 const REQ_TIMEOUT_MS = 30000;
 
+/** Longest we wait for a fresh engine to finish loading its agents, commands and skills. */
+const CATALOG_READY_MS = 15000;
+
 /** Reject with a TimeoutError (which the bridge treats as a lost connection) after `ms`. */
 function withTimeout<T>(p: Promise<T> | T, ms: number, what: string): Promise<T> {
   if (!(p instanceof Promise)) {
@@ -68,6 +71,8 @@ export class OpencodeV2Client {
   /** The SDK host behind a guard: see `guard`. */
   private readonly host: SdkHost;
   private closed = false;
+  /** Resolves once the workspace's agents, commands and skills are loaded: see `catalogReady`. */
+  private catalog: Promise<void> | undefined;
 
   constructor(
     host: SdkHost,
@@ -118,7 +123,37 @@ export class OpencodeV2Client {
 
   // ---- Catalog ---------------------------------------------------------------
 
+  /**
+   * A freshly created engine answers catalog calls before it has read the
+   * workspace: for a few hundred milliseconds agent, command and skill lists
+   * come back empty (not even the built-in `build` agent). The panel asks for
+   * them right after start, so it would show a picker without the user's
+   * agents and a slash menu without their commands. Wait until the built-in
+   * agents appear — every list is loaded together — or give up after a while
+   * and let the caller see whatever the engine has.
+   */
+  private catalogReady(): Promise<void> {
+    if (!this.catalog) {
+      this.catalog = (async () => {
+        const end = Date.now() + CATALOG_READY_MS;
+        while (Date.now() < end) {
+          const res = await this.host.agent.list(this.location);
+          if (((res?.data ?? res ?? []) as unknown[]).length) {
+            return;
+          }
+          await new Promise((r) => setTimeout(r, 100));
+        }
+        log('embedded opencode: agents still empty after waiting; continuing');
+      })().catch((err) => {
+        this.catalog = undefined; // a failed probe must not wedge later calls
+        throw err;
+      });
+    }
+    return this.catalog;
+  }
+
   async listProviders(): Promise<ProvidersResponse> {
+    await this.catalogReady();
     const [models, providers] = await Promise.all([this.host.model.list(this.location), this.host.provider.list(this.location)]);
     const names = new Map<string, string>(((providers?.data ?? []) as any[]).map((p) => [String(p.id), String(p.name ?? p.id)]));
     const byProvider = new Map<string, ProviderInfo>();
@@ -156,6 +191,7 @@ export class OpencodeV2Client {
   }
 
   async listAgents(): Promise<AgentsResponse> {
+    await this.catalogReady();
     const res = await this.host.agent.list(this.location);
     // v2's `name` is a display label ("Build"); the id is what switchAgent and
     // the 1.x code (and the user's settings) call it.
@@ -171,11 +207,13 @@ export class OpencodeV2Client {
   }
 
   async listCommands(): Promise<CommandsResponse> {
+    await this.catalogReady();
     const res = await this.host.command.list(this.location);
     return ((res?.data ?? res ?? []) as any[]).map((c) => ({ ...c, name: String(c.name ?? c.id), description: c.description }));
   }
 
   async listSkills(): Promise<SkillsResponse> {
+    await this.catalogReady();
     const res = await this.host.skill.list(this.location);
     return ((res?.data ?? res ?? []) as any[]).map((s) => ({
       ...s,
@@ -187,6 +225,7 @@ export class OpencodeV2Client {
   }
 
   async listMcp(): Promise<McpStatusResponse> {
+    await this.catalogReady();
     const res = await this.host.mcp.list(this.location);
     const rows: any[] = Array.isArray(res?.data) ? res.data : Array.isArray(res) ? res : [];
     const out: McpStatusResponse = {};
