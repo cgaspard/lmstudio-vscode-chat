@@ -18,6 +18,11 @@ const ROOT = process.env.MIGRATION_ROOT;
   const { DatabaseSync } = require('node:sqlite') as typeof import('node:sqlite');
   const db = new DatabaseSync(path.join(ROOT, 'data', 'opencode', 'opencode.db'), { readOnly: true });
   const v1 = db.prepare('select directory, count(*) as n from session where parent_id is null group by directory').all() as Array<{ directory: string; n: number }>;
+  // Sessions that held messages under 1.x. An empty one (a chat opened but
+  // never sent) has nothing to carry over, so it cannot show history loading.
+  const withMessages = new Set(
+    (db.prepare('select distinct session_id as id from message').all() as Array<{ id: string }>).map((r) => r.id),
+  );
   db.close();
 
   const host = await createHost(path.resolve(__dirname, '..'), { root: ROOT }, JSON.stringify({}));
@@ -41,7 +46,7 @@ const ROOT = process.env.MIGRATION_ROOT;
       const client = new OpencodeV2Client(host, directory, 'migration');
       const sessions = await client.listSessions();
       check(`${path.basename(directory)}: exactly its ${n} 1.x session(s) listed`, sessions.length === n && sessions.every((x) => !x.directory || x.directory === directory), `${sessions.length} found`);
-      const first = sessions[0];
+      const first = sessions.find((x) => withMessages.has(x.id));
       if (first) {
         const msgs = await client.getMessages(first.id);
         const users = msgs.filter((m) => m.info.role === 'user').length;

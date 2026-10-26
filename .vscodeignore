@@ -44,6 +44,9 @@ opencode.json
 graphoxide-out/**
 test-live/**
 out-live/**
+# The 1.x OpenCode binary a pre-2.0 checkout fetched into bin/. Nothing uses it
+# now, and a stale copy left in a working tree must never ship (180 MB).
+bin/**
 
 # Stray screenshots and scratch images dropped at the repo root must never
 # reach the Marketplace — packaged media lives under media/.
