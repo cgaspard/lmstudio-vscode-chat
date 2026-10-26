@@ -486,6 +486,15 @@ export class ChatBridge {
       return; // a superseded bridge must not handle messages
     }
     try {
+      // The engine is recreated when a setting it was built from changes
+      // (permission mode, MCP servers, the LM Studio URL) or on "Restart
+      // OpenCode Server". The health loop would notice within a tick, but the
+      // message in hand would already have failed against the stopped engine
+      // — so heal first.
+      if (msg.type !== 'ready' && this.client && !this.deps.server.isRunning) {
+        log('engine was restarted since this panel connected; reconnecting before handling the message');
+        await this.reconnect();
+      }
       switch (msg.type) {
         case 'ready':
           // A fresh webview always starts with the picker closed — stop any

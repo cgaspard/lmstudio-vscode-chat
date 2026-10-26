@@ -8,9 +8,15 @@ export function initLogger(context: vscode.ExtensionContext): vscode.OutputChann
   return channel;
 }
 
+/** Test runs mirror the log to stdout so a failing e2e shows what the host did. */
+const mirror = typeof process !== 'undefined' && !!process.env.LMSTUDIO_CODE_LOG_STDOUT;
+
 export function log(message: string): void {
   const line = `[${new Date().toISOString()}] ${message}`;
   channel?.appendLine(line);
+  if (mirror) {
+    console.log(`[ext] ${line}`);
+  }
 }
 
 export function logError(message: string, err?: unknown): void {
