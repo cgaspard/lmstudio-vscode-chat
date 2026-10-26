@@ -13,6 +13,7 @@ import {
   v2FormAnswer,
   v2PromptFile,
   type V2Event,
+  v1McpStatus,
 } from '../src/opencode/translate';
 
 // Payloads captured from a live OpenCode 2.1.4 (paths scrubbed).
@@ -142,8 +143,21 @@ test('non-question forms are not shown as questions', () => {
 
 test('compaction completion reports session.compacted with the summary', () => {
   const { out } = run(fx.compaction);
-  assert.equal(out[0].type, 'session.compacted');
-  assert.match(String((out[0].properties as any).summary), /Objective/);
+  const done = out.find((e) => e.type === 'session.compacted');
+  assert.ok(done);
+  assert.match(String((done.properties as any).summary), /Objective/);
+});
+
+test('a finished compaction shows live as a marker plus the summary turn, as in history', () => {
+  const { out } = run(fx.compaction);
+  const msgs = out.filter((e) => e.type === 'message.updated').map((e) => (e.properties as any).info);
+  assert.deepEqual(msgs.map((m) => m.role), ['user', 'assistant'], 'marker first, then the summary turn the webview folds');
+  const parts = out.filter((e) => e.type === 'message.part.updated').map((e) => (e.properties as any).part);
+  assert.equal(parts[0].type, 'compaction');
+  assert.equal(parts[0].messageID, msgs[0].id);
+  assert.equal(parts[1].messageID, msgs[1].id);
+  assert.match(parts[1].text, /Objective/);
+  assert.equal(out.at(-1)?.type, 'session.compacted', 'the outcome comes last, after the chip exists');
 });
 
 test('history comes back oldest first, a turn\'s steps folded into one message', () => {
@@ -232,4 +246,19 @@ test('prompt attachments are data: URLs carrying exactly what the panel chose', 
   assert.match(sel.uri, /^data:text\/plain;base64,/);
   assert.equal(Buffer.from(sel.uri.split(',')[1], 'base64').toString('utf8'), 'codeword = BANANA-17', 'only the selection, not the file');
   assert.match(String(sel.description), /app\.txt/);
+});
+
+test('MCP status: the nested 2.1.4 shape reads as the plain 1.x status', () => {
+  const got = v1McpStatus([
+    { name: 'e2e-echo', status: { status: 'connected' } },
+    { name: 'broken', status: { status: 'failed', error: 'spawn ENOENT' } },
+    { name: 'flat', status: 'disabled' },
+    { name: 'typed', status: { type: 'pending' } },
+  ]);
+  assert.equal(got['e2e-echo'].status, 'connected');
+  assert.equal(got['e2e-echo'].error, undefined);
+  assert.equal(got.broken.status, 'failed');
+  assert.equal(got.broken.error, 'spawn ENOENT');
+  assert.equal(got.flat.status, 'disabled');
+  assert.equal(got.typed.status, 'pending');
 });

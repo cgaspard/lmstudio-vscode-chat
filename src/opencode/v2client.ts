@@ -15,7 +15,7 @@ import type {
   SkillsResponse,
 } from './protocol';
 import { fromEngineProviderID, toEngineProviderID } from '../core/providerIds';
-import { EventTranslator, type InboxItem, v1History, v2FormAnswer, v2PromptFile } from './translate';
+import { EventTranslator, type InboxItem, v1History, v1McpStatus, v2FormAnswer, v2PromptFile } from './translate';
 
 /** How a prompt reaches a session that is already working. */
 export type Delivery = 'steer' | 'queue';
@@ -228,11 +228,7 @@ export class OpencodeV2Client {
     await this.catalogReady();
     const res = await this.host.mcp.list(this.location);
     const rows: any[] = Array.isArray(res?.data) ? res.data : Array.isArray(res) ? res : [];
-    const out: McpStatusResponse = {};
-    for (const s of rows) {
-      out[String(s.name ?? s.id)] = { ...s, status: String(s.status?.type ?? s.status ?? 'pending'), error: s.status?.error ?? s.error };
-    }
-    return out;
+    return v1McpStatus(rows);
   }
 
   // ---- Sessions ----------------------------------------------------------------

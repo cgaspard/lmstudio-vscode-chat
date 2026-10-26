@@ -7,7 +7,7 @@
 // No I/O here: everything is unit-tested against payloads captured from a live
 // OpenCode 2.1.4 (test/translate.test.ts).
 import { fromEngineProviderID } from '../core/providerIds';
-import type { MessageWithParts, OpencodeEvent, Part, QuestionAnswer, QuestionInfo } from './protocol';
+import type { McpStatusResponse, MessageWithParts, OpencodeEvent, Part, QuestionAnswer, QuestionInfo } from './protocol';
 
 /** An event as the v2 SDK's `event.subscribe()` yields it. */
 export interface V2Event {
@@ -113,6 +113,26 @@ const stepStartId = (mid: string) => `${mid}:step-start`;
 const stepFinishId = (mid: string) => `${mid}:step-finish`;
 const userTextId = (mid: string) => `${mid}:text`;
 const userFileId = (mid: string, i: number) => `${mid}:file:${i}`;
+
+// ---- MCP status -----------------------------------------------------------------
+
+/**
+ * v2 `mcp.list` rows → the 1.x `{name: {status, error}}` map the /mcp panel
+ * reads. 2.1.4 nests the state as `status: {status: 'connected'}` (an error,
+ * when there is one, beside it); a flat string or a `{type}` object is
+ * accepted too, so a shape change degrades to a readable status rather than
+ * "[object Object]".
+ */
+export function v1McpStatus(rows: any[]): McpStatusResponse {
+  const out: McpStatusResponse = {};
+  for (const s of rows) {
+    const st = s?.status;
+    const status = typeof st === 'string' ? st : typeof st?.status === 'string' ? st.status : typeof st?.type === 'string' ? st.type : 'pending';
+    const error = st?.error ?? s?.error;
+    out[String(s?.name ?? s?.id)] = { ...s, status, ...(error ? { error: typeof error === 'string' ? error : errorMessage(error) } : { error: undefined }) };
+  }
+  return out;
+}
 
 // ---- Prompt attachments -------------------------------------------------------
 
@@ -380,8 +400,24 @@ export class EventTranslator {
         return [ev('session.retry', { sessionID: sid, attempt: d.attempt, at: d.at, message: errorMessage(d.error) })];
 
       // -- compaction ----------------------------------------------------------
-      case 'session.compaction.ended':
-        return [ev('session.compacted', { sessionID: sid, summary: d.text ?? '' })];
+      case 'session.compaction.ended': {
+        // 1.x announced a compaction live as a marker message (a `compaction`
+        // part) followed by the summarizer's turn, which the webview folds
+        // into one expandable chip. v2 only reports the outcome, so emit that
+        // same pair — the shape history already has (see v1History) — or the
+        // chip would only appear after a reload.
+        const mid = `${sid}:compaction:${e.id ?? Date.now()}`;
+        const marker = `${mid}:marker`;
+        const now = Date.now();
+        const summary = String(d.text ?? '');
+        return [
+          ev('message.updated', { info: { id: marker, sessionID: sid, role: 'user', time: { created: now } } }),
+          ev('message.part.updated', { part: { id: `${marker}:part`, sessionID: sid, messageID: marker, type: 'compaction' } }),
+          ev('message.updated', { info: { id: mid, sessionID: sid, role: 'assistant', time: { created: now, completed: now } } }),
+          ...(summary ? [ev('message.part.updated', { part: { id: textPartId(mid, 0), sessionID: sid, messageID: mid, type: 'text', text: summary } })] : []),
+          ev('session.compacted', { sessionID: sid, summary }),
+        ];
+      }
       case 'session.compaction.failed':
         return [ev('session.error', { sessionID: sid, error: v1Error(d.error) })];
 
