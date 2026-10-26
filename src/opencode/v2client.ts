@@ -31,6 +31,10 @@ const REQ_TIMEOUT_MS = 30000;
 
 /** Longest we wait for a fresh engine to finish loading its agents, commands and skills. */
 const CATALOG_READY_MS = 15000;
+/** How long we wait for the engine to announce that load before falling back to polling. */
+const CATALOG_EVENT_WAIT_MS = 5000;
+/** The events a loaded workspace catalog announces itself with, one per list. */
+const CATALOG_EVENTS = ['agent.updated', 'command.updated', 'skill.updated'];
 
 /** Reject with a TimeoutError (which the bridge treats as a lost connection) after `ms`. */
 function withTimeout<T>(p: Promise<T> | T, ms: number, what: string): Promise<T> {
@@ -73,6 +77,8 @@ export class OpencodeV2Client {
   private closed = false;
   /** Resolves once the workspace's agents, commands and skills are loaded: see `catalogReady`. */
   private catalog: Promise<void> | undefined;
+  /** Which of CATALOG_EVENTS the engine has announced. */
+  private readonly catalogLoaded = new Set<string>();
 
   constructor(
     host: SdkHost,
@@ -81,6 +87,9 @@ export class OpencodeV2Client {
     readonly version: string,
   ) {
     this.host = this.guard(host, []);
+    // Listen from the start: the catalog-loaded announcements (catalogReady)
+    // come once, a few hundred milliseconds after the first request.
+    this.ensureUpstream();
   }
 
   /**
@@ -125,23 +134,35 @@ export class OpencodeV2Client {
 
   /**
    * A freshly created engine answers catalog calls before it has read the
-   * workspace: for a few hundred milliseconds agent, command and skill lists
-   * come back empty (not even the built-in `build` agent). The panel asks for
-   * them right after start, so it would show a picker without the user's
-   * agents and a slash menu without their commands. Wait until the built-in
-   * agents appear — every list is loaded together — or give up after a while
-   * and let the caller see whatever the engine has.
+   * workspace, and then fills its lists in stages: empty, then the built-ins
+   * (build, plan; init, review), then the workspace's own agents and commands,
+   * then skills (~50 / 100 / 170 / 200 ms after the first request). The panel
+   * lists them right after start, so it could show a picker without the
+   * user's agents and a slash menu without their commands. The engine
+   * announces each list once it is loaded (agent.updated, command.updated,
+   * skill.updated), so wait for all three — or, should those never come, for
+   * at least the built-in agents — before the first catalog answer.
    */
   private catalogReady(): Promise<void> {
     if (!this.catalog) {
       this.catalog = (async () => {
-        const end = Date.now() + CATALOG_READY_MS;
-        while (Date.now() < end) {
-          const res = await this.host.agent.list(this.location);
+        this.ensureUpstream(); // normally already running (see the constructor)
+        const start = Date.now();
+        // A request is what makes the engine load this workspace.
+        let res = await this.host.agent.list(this.location);
+        while (this.catalogLoaded.size < CATALOG_EVENTS.length && Date.now() - start < CATALOG_EVENT_WAIT_MS) {
+          await new Promise((r) => setTimeout(r, 25));
+        }
+        if (this.catalogLoaded.size >= CATALOG_EVENTS.length) {
+          return;
+        }
+        log('embedded opencode: catalog load not announced; waiting for the agent list instead');
+        while (Date.now() - start < CATALOG_READY_MS) {
           if (((res?.data ?? res ?? []) as unknown[]).length) {
             return;
           }
           await new Promise((r) => setTimeout(r, 100));
+          res = await this.host.agent.list(this.location);
         }
         log('embedded opencode: agents still empty after waiting; continuing');
       })().catch((err) => {
@@ -456,6 +477,9 @@ export class OpencodeV2Client {
     void (async () => {
       try {
         for await (const e of this.host.event.subscribe(undefined, { signal: ac.signal })) {
+          if (CATALOG_EVENTS.includes(e?.type)) {
+            this.catalogLoaded.add(e.type);
+          }
           for (const out of this.translator.translate(e)) {
             this.emit(out);
           }
