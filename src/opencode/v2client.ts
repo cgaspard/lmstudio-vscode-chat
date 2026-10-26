@@ -15,7 +15,7 @@ import type {
   SkillsResponse,
 } from './protocol';
 import { fromEngineProviderID, toEngineProviderID } from '../core/providerIds';
-import { EventTranslator, type InboxItem, v1History, v2FormAnswer } from './translate';
+import { EventTranslator, type InboxItem, v1History, v2FormAnswer, v2PromptFile } from './translate';
 
 /** How a prompt reaches a session that is already working. */
 export type Delivery = 'steer' | 'queue';
@@ -305,7 +305,7 @@ export class OpencodeV2Client {
       .filter((p): p is { type: 'text'; text: string } => p.type === 'text')
       .map((p) => p.text)
       .join('\n');
-    const files = body.parts.filter((p) => p.type === 'file').map(v2File);
+    const files = body.parts.filter((p) => p.type === 'file').map((p) => v2PromptFile(p as Parameters<typeof v2PromptFile>[0]));
     await this.host.session.prompt({
       sessionID,
       text,
@@ -525,19 +525,3 @@ function v1Session(s: any): Session {
   };
 }
 
-/** A 1.x file part (data: URL image, or a workspace file with its text) → a v2 attachment. */
-function v2File(p: PromptBody['parts'][number]): Record<string, unknown> {
-  const f = p as { mime: string; url: string; filename?: string; source?: { path: string; text: { value: string } } };
-  if (f.url.startsWith('data:')) {
-    const comma = f.url.indexOf(',');
-    return { data: f.url.slice(comma + 1), mime: f.mime, source: { type: 'inline' }, ...(f.filename ? { name: f.filename } : {}) };
-  }
-  // A workspace file or selection: inline its text, keep where it came from.
-  const text = f.source?.text?.value ?? '';
-  return {
-    data: Buffer.from(text, 'utf8').toString('base64'),
-    mime: f.mime || 'text/plain',
-    source: { type: 'uri', uri: f.url },
-    ...(f.filename ? { name: f.filename } : {}),
-  };
-}

@@ -114,6 +114,33 @@ const stepFinishId = (mid: string) => `${mid}:step-finish`;
 const userTextId = (mid: string) => `${mid}:text`;
 const userFileId = (mid: string, i: number) => `${mid}:file:${i}`;
 
+// ---- Prompt attachments -------------------------------------------------------
+
+/**
+ * A 1.x prompt file part → an OpenCode 2 prompt attachment (`{uri, name}`; the
+ * engine resolves the uri). Everything goes as a data: URL so the model gets
+ * exactly what the panel chose to send: the image as pasted, the open file
+ * capped as the bridge capped it, a selection as just the selected text — not
+ * whatever is on disk when the engine gets round to reading it.
+ */
+export function v2PromptFile(p: {
+  mime: string;
+  url: string;
+  filename?: string;
+  source?: { path: string; text: { value: string } };
+}): { uri: string; name?: string; description?: string } {
+  if (p.url.startsWith('data:')) {
+    return { uri: p.url, ...(p.filename ? { name: p.filename } : {}) };
+  }
+  const text = p.source?.text?.value ?? '';
+  const mime = p.mime || 'text/plain';
+  return {
+    uri: `data:${mime};base64,${Buffer.from(text, 'utf8').toString('base64')}`,
+    ...(p.filename ? { name: p.filename } : {}),
+    ...(p.source?.path ? { description: `From ${p.source.path}` } : {}),
+  };
+}
+
 // ---- Permissions and questions ------------------------------------------------
 
 /** v2 `permission.asked` data → the 1.x permission request the webview renders. */

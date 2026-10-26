@@ -11,6 +11,7 @@ import {
   v1ToolInput,
   v1ToolName,
   v2FormAnswer,
+  v2PromptFile,
   type V2Event,
 } from '../src/opencode/translate';
 
@@ -216,4 +217,19 @@ test('renamed tools map back to the names the webview special-cases', () => {
   assert.equal(v1ToolName('subagent'), 'task');
   assert.equal(v1ToolName('read'), 'read');
   assert.equal(v1ToolInput('subagent', { agent: 'reviewer', prompt: 'x' }).subagent_type, 'reviewer');
+});
+
+test('prompt attachments are data: URLs carrying exactly what the panel chose', () => {
+  const img = v2PromptFile({ mime: 'image/png', url: 'data:image/png;base64,AAAA', filename: 'shot.png' });
+  assert.deepEqual(img, { uri: 'data:image/png;base64,AAAA', name: 'shot.png' });
+  const sel = v2PromptFile({
+    mime: 'text/plain',
+    url: 'file:///w/src/app.txt',
+    filename: 'src/app.txt:3',
+    source: { path: '/w/src/app.txt', text: { value: 'codeword = BANANA-17' } },
+  });
+  assert.equal(sel.name, 'src/app.txt:3');
+  assert.match(sel.uri, /^data:text\/plain;base64,/);
+  assert.equal(Buffer.from(sel.uri.split(',')[1], 'base64').toString('utf8'), 'codeword = BANANA-17', 'only the selection, not the file');
+  assert.match(String(sel.description), /app\.txt/);
 });
