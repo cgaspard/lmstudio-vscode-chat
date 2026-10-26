@@ -79,7 +79,16 @@ export async function freshChat(opts: { model?: string; agent?: string } = {}): 
   await connect();
   // The panel's own New chat button (the command targets the sidebar view,
   // not this editor-tab panel; /clear deletes every session).
-  await until(async () => !(await busy()), 120_000, 'the previous turn to settle');
+  // A turn left running by a failed test (e.g. waiting on an unanswered card)
+  // must not fail every test after it: give it time, then stop it.
+  const settled = await until(async () => !(await busy()), 60_000, 'the previous turn to settle').then(
+    () => true,
+    () => false,
+  );
+  if (!settled) {
+    await h.click('#send'); // the send button is the stop button while busy
+    await until(async () => !(await busy()), 30_000, 'the stuck turn to stop');
+  }
   await h.click('#ta-new');
   await until(async () => (await h.count('.msg')) === 0, 15_000, 'the conversation to clear');
   await selectModel(opts.model ?? MODEL);
@@ -168,6 +177,7 @@ export async function panelState(): Promise<string> {
     `input: ${await h.attr('#input', 'value')} (disabled=${await h.attr('#input', 'disabled')})`,
     `messages: ${(await h.allText('.msg')).map((t) => t.slice(0, 120)).join(' || ')}`,
     `chips: ${(await h.allText('.sys-chip, .error-bubble')).join(' || ')}`,
+    `waiting on: ${(await h.allText('.perm-card:not(.resolved) .perm-head, .question-card:not(.resolved)')).map((t) => t.slice(0, 120)).join(' || ')}`,
     `banner: ${await h.text('#conn-banner')}`,
   ];
   return lines.map((l) => `        ${l}`).join('\n');

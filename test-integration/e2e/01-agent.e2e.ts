@@ -2,8 +2,9 @@
 // streaming markdown, reasoning blocks and the effort control, the context
 // meter and tok/s.
 import * as assert from 'node:assert';
+import * as path from 'node:path';
 import { FakeThinker, THINKER_MODEL } from './fakeThinker';
-import { ask, freshChat, h, lmStudioModels, MODEL, read, until, useServer } from './lib';
+import { ask, busy, freshChat, h, lmStudioModels, MODEL, read, send, until, useServer } from './lib';
 
 describe('e2e · the agent', function () {
   it('reads a file with a tool and answers from it', async () => {
@@ -44,10 +45,30 @@ describe('e2e · the agent', function () {
 
   it('plan mode stays read-only', async () => {
     await freshChat({ agent: 'plan' });
-    await ask('Create a file named plan-should-not-write.txt containing hello.');
+    // v2's plan agent may write plan notes to ~/.opencode/plan, which is outside
+    // the workspace and so asks first: deny those (a test must not write into
+    // the real home directory) and let the turn finish.
+    await send('Create a file named plan-should-not-write.txt containing hello.');
+    await until(busy, 30_000, 'the turn to start').catch(() => undefined);
+    const asked: string[] = [];
+    await until(
+      async () => {
+        if ((await h.count('.perm-card:not(.resolved)')) > 0) {
+          asked.push(String(await h.text('.perm-card:not(.resolved) .perm-detail')));
+          await h.click('.perm-card:not(.resolved) .perm-btn.reject');
+        }
+        return !(await busy());
+      },
+      240_000,
+      'the turn to end',
+    );
     const fs = await import('node:fs');
     const { ws } = await import('./lib');
     assert.ok(!fs.existsSync(ws('plan-should-not-write.txt')), 'the plan agent must not write files');
+    assert.ok(
+      asked.every((d) => d.includes(path.join('.opencode', 'plan'))),
+      `the only writes it may ask for are plan notes (asked: ${asked.join(' | ')})`,
+    );
   });
 
   it('streams markdown with code blocks', async () => {
