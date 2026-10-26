@@ -21,17 +21,31 @@ describe('e2e · steering, stopping, questions, goals', function () {
 
   it('Alt+Enter queues a message for after the turn', async () => {
     await freshChat();
-    await send('Count from 1 to 30, one number per line.');
+    // Plain text, no tools: a small model otherwise reaches for a tool (and an
+    // approval) to "count".
+    await send('Do not use any tools. In your reply, write the numbers from 1 to 30, one per line.');
     await until(busy, 60_000, 'the turn to start');
     await send('Then reply with exactly: QUEUED-RAN', { queue: true });
-    await until(async () => /QUEUED-RAN/.test(await assistantText()), 300_000, 'the queued message to run');
+    await until(
+      async () => {
+        // Should it still ask for something, deny it: the queue is under test.
+        if ((await h.count('.perm-card:not(.resolved)')) > 0) {
+          await h.click('.perm-card:not(.resolved) .perm-btn.reject');
+        }
+        return /QUEUED-RAN/.test(await assistantText());
+      },
+      300_000,
+      'the queued message to run',
+    );
     await turn();
     assert.strictEqual(await h.count('.inbox-item'), 0);
   });
 
   it('the stop button stops a turn with one quiet "Stopped" chip', async () => {
     await freshChat();
-    await send('Write a 1500-word essay about the history of compilers.');
+    // Plain text, no tools or questions: a small model otherwise loads a skill or
+    // asks what to focus on, and never streams the essay.
+    await send('Do not use any tools, skills or questions. Directly in your reply, write a 1500-word essay about the history of compilers.');
     await until(async () => (await assistantText()).length > 40, 240_000, 'streaming to begin');
     await h.click('#send'); // the send button is the stop button while busy
     await until(async () => !(await busy()), 60_000, 'the turn to stop');

@@ -2356,13 +2356,14 @@ function mdToHtml(src: string): string {
   const raw = marked.parse(src ?? '', { async: false, gfm: true, breaks: true }) as string;
   const tpl = document.createElement('template');
   tpl.innerHTML = raw;
-  tpl.content.querySelectorAll('script,iframe,object,embed,link,meta,style').forEach((n) => n.remove());
-  // A <template> never renders: its content lives outside the document. Models
-  // echo the <template> wrapper of OpenCode 2's compaction prompt around the
-  // summary, which then showed as an empty chip. Show what is inside instead.
+  // A literal <template> in model output (a Vue snippet outside a fence, or a
+  // compaction summary echoing OpenCode's "<template>" prompt) parses as an
+  // inert template whose content never renders: unwrap it so the text shows.
+  // Before the sanitizing below, so what it held is sanitized like the rest.
   for (let t = tpl.content.querySelector('template'); t; t = tpl.content.querySelector('template')) {
-    t.replaceWith((t as HTMLTemplateElement).content);
+    t.replaceWith(t.content);
   }
+  tpl.content.querySelectorAll('script,iframe,object,embed,link,meta,style').forEach((n) => n.remove());
   tpl.content.querySelectorAll('*').forEach((el) => {
     for (const attr of Array.from(el.attributes)) {
       if (/^on/i.test(attr.name)) {
