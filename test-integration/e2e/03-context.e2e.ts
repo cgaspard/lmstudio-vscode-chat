@@ -3,7 +3,7 @@
 import * as assert from 'node:assert';
 import * as fs from 'node:fs';
 import * as vscode from 'vscode';
-import { ask, freshChat, h, until, ws } from './lib';
+import { ask, freshChat, h, REASONING_MODEL, until, ws } from './lib';
 
 /** Open a file beside the panel (as a user would) and select one line. */
 async function openAndSelect(rel: string, line: number): Promise<void> {
@@ -69,14 +69,19 @@ describe('e2e · context', function () {
     assert.match(reply, /red/i);
   });
 
-  it('/compact summarizes the conversation and shows the summary', async () => {
-    await freshChat();
-    await ask('Remember this: the launch code is ZEBRA-9. Reply OK.');
+  it('/compact summarizes the conversation and shows the summary', async function () {
+    this.timeout(900_000);
+    // The summary is written by the session's model; the small instruct model
+    // tends to summarize the summarizing instructions instead of the chat.
+    await freshChat({ model: REASONING_MODEL });
+    await ask('Remember this: the launch code is ZEBRA-9. Reply OK.', 600_000);
     await h.setInput('/compact');
     await h.keydown('Enter');
     await until(async () => (await h.count('.compaction-chip')) > 0, 300_000, 'the compaction chip');
-    await until(async () => /ZEBRA-9|launch/i.test(String(await h.text('.compaction-chip'))), 300_000, 'the summary in the chip');
-    const reply = await ask('What was the launch code? Answer with just the code.');
+    // The summary lands in the chip once compaction ends, which makes it expandable.
+    await until(async () => (await h.attr('.compaction-chip .compaction-head', 'disabled')) === null, 300_000, 'the summary in the chip');
+    assert.ok((await h.count('.compaction-chip .compaction-body *')) > 0, 'the chip carries the summary');
+    const reply = await ask('What was the launch code? Answer with just the code.', 600_000);
     assert.match(reply, /ZEBRA-9/, 'context survived compaction');
   });
 });

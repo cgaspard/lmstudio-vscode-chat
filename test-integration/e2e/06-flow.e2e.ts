@@ -53,7 +53,7 @@ describe('e2e · steering, stopping, questions, goals', function () {
 
   it('/goal runs until the judge says the goal is met', async () => {
     await freshChat();
-    await h.setInput('/goal Get the agent to reply in the chat with the exact word GOAL-REACHED.');
+    await h.setInput('/goal Reply in the chat with the exact word GOAL-REACHED.');
     await h.keydown('Enter');
     await until(async () => !/hidden/.test(String(await h.attr('#goal-bar', 'class'))), 30_000, 'the goal bar');
     await until(async () => (await h.allText('.sys-chip')).some((t) => /Goal met/.test(t)), 600_000, 'the goal to be met');
