@@ -34,6 +34,11 @@ async function smallAction(): Promise<{ index: number; label: string }> {
   return { index, label: labels[index] ?? '' };
 }
 
+/** The activity line while the panel loads, grows or ejects a model. */
+async function busyStatus(): Promise<boolean> {
+  return /Loading|Unloading/.test(String(await h.text('#activity .activity-label')));
+}
+
 const setMinContext = (tokens: number | undefined) =>
   cfg().update('minContextLength', tokens, vscode.ConfigurationTarget.Workspace);
 
@@ -71,7 +76,11 @@ describe('e2e · LM Studio', function () {
     const { index, label } = await smallAction();
     assert.match(label, /Load/, `the row offers Load (${label})`);
     await h.click('#model-menu-list .model-row .model-action', index);
-    await until(async () => (await small()).loaded, 300_000, 'LM Studio to load the model');
+    // LM Studio lists an instance while it is still loading; the picker closes
+    // itself once the load has really finished.
+    await until(async () => (await h.count('#model-menu:not(.hidden)')) === 0, 300_000, 'the load to finish (the menu closes)');
+    await until(async () => !(await busyStatus()), 300_000, 'the loading status to clear');
+    assert.ok((await small()).loaded, 'LM Studio has the model loaded');
     assert.strictEqual((await small()).context, 16384, 'loaded with the window asked for');
     // Loading a model also makes it the active one: the chip names it with its window.
     await until(async () => /16K/.test(String(await h.text('#model-btn .model-btn-label'))), 30_000, 'the chip to show 16K');
@@ -87,7 +96,7 @@ describe('e2e · LM Studio', function () {
     await openModelMenu();
     await until(async () => (await h.count('#ctx-presets .ctx-preset[data-tokens="32768"]')) > 0, 10_000, 'the presets');
     await h.click('#ctx-presets .ctx-preset[data-tokens="32768"]');
-    await until(async () => (await small()).context === 32768, 300_000, 'LM Studio to reload at 32K');
+    await until(async () => (await small()).context === 32768 && !(await busyStatus()), 300_000, 'LM Studio to reload at 32K');
     assert.strictEqual(cfg().get('minContextLength'), 32768, 'the choice is saved');
     await until(async () => /\bactive\b/.test(String(await h.attr('#ctx-presets .ctx-preset[data-tokens="32768"]', 'class'))), 10_000, 'the preset to read as active');
     await closeModelMenu();
