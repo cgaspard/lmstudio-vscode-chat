@@ -3,7 +3,7 @@
 import * as assert from 'node:assert';
 import * as fs from 'node:fs';
 import * as vscode from 'vscode';
-import { ask, freshChat, h, REASONING_MODEL, until, ws } from './lib';
+import { ask, freshChat, h, until, ws } from './lib';
 
 /** Open a file beside the panel (as a user would) and select one line. */
 async function openAndSelect(rel: string, line: number): Promise<void> {
@@ -71,7 +71,7 @@ describe('e2e · context', function () {
 
   it('/compact summarizes the conversation and shows the summary', async function () {
     this.timeout(900_000);
-    await freshChat({ model: REASONING_MODEL });
+    await freshChat();
     await ask('Remember this: the launch code is ZEBRA-9. Reply OK.', 600_000);
     await h.setInput('/compact');
     await h.keydown('Enter');

@@ -8,7 +8,6 @@ import * as h from '../suite/helpers';
 export const BASE_URL = process.env.E2E_BASE_URL ?? 'http://127.0.0.1:1234/v1';
 // One small model for everything: the LM Studio is shared, so keep loads down.
 export const MODEL = process.env.E2E_MODEL ?? 'qwen/qwen3-vl-4b';
-export const REASONING_MODEL = process.env.E2E_REASONING_MODEL ?? MODEL;
 /** The model the LM Studio tests eject, load and resize: the same one. */
 export const SMALL_MODEL = process.env.E2E_SMALL_MODEL ?? MODEL;
 export const WORKSPACE = process.env.E2E_WORKSPACE ?? '';
@@ -29,6 +28,36 @@ export async function until(pred: () => Promise<boolean> | boolean, ms: number, 
   throw new Error(`timed out after ${ms}ms waiting for ${what}`);
 }
 
+/** The registry id of the e2e LM Studio server, and the server the panel uses now. */
+let mainServerId = '';
+let activeBaseUrl = BASE_URL;
+
+/**
+ * Point the panel at another model server (e.g. a scripted fake) the way a
+ * user does it — add it, then switch to it — and return how to switch back.
+ */
+export async function useServer(url: string): Promise<() => Promise<void>> {
+  const added = (await vscode.commands.executeCommand('lmstudioCode._test.useServer', url)) as { id: string; prevActiveId: string };
+  await switchTo(added.id, url);
+  return async () => {
+    await switchTo(mainServerId, BASE_URL);
+    await vscode.commands.executeCommand('lmstudioCode._test.restoreServer', { id: added.id, prevActiveId: mainServerId });
+  };
+}
+
+async function switchTo(id: string, url: string): Promise<void> {
+  await until(async () => !(await busy()), 120_000, 'the previous turn to settle');
+  await h.postToHost({ type: 'switchServer', id }); // what clicking its row in the server menu sends
+  activeBaseUrl = url;
+  const where = new URL(url).host;
+  const want = (await lmStudioModels()).length;
+  await openModelMenu();
+  // The switch is done when the menu marks the new server active and lists its models.
+  await until(async () => (await h.allText('#server-menu-list .model-row.active')).some((t) => t.includes(where)), 60_000, `${where} to be the active server`);
+  await until(async () => (await h.count('#model-menu-list .model-row')) === want, 60_000, `the ${want} model(s) of ${where}`);
+  await closeModelMenu();
+}
+
 /** Point the extension at the model server and open a ready panel. Once per run. */
 let connected = false;
 export async function connect(): Promise<void> {
@@ -39,7 +68,7 @@ export async function connect(): Promise<void> {
   // autoEnsureContext stays on (the default): the panel reloads a model that
   // is loaded with too small a window, which is part of what is under test.
   await cfg().update('defaultModel', MODEL, vscode.ConfigurationTarget.Global);
-  await vscode.commands.executeCommand('lmstudioCode._test.useServer', BASE_URL);
+  mainServerId = ((await vscode.commands.executeCommand('lmstudioCode._test.useServer', BASE_URL)) as { id: string }).id;
   await h.openPanel();
   await until(async () => /qwen|model/i.test(String(await h.text('#model-btn .model-btn-label'))), 120_000, 'the model chip');
   connected = true;
@@ -60,7 +89,7 @@ export async function freshChat(opts: { model?: string; agent?: string } = {}): 
 
 /** LM Studio's chat models, in the order the panel's model menu lists them. */
 export async function lmStudioModels(): Promise<Array<{ key: string; loaded: boolean; context: number; reasoning: boolean }>> {
-  const root = BASE_URL.replace(/\/v\d+\/?$/, '');
+  const root = activeBaseUrl.replace(/\/v\d+\/?$/, '');
   const res = await fetch(`${root}/api/v1/models`);
   const json = (await res.json()) as { models: any[] };
   return json.models

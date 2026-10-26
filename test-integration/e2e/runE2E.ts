@@ -4,10 +4,11 @@
 //
 //   npm run test:e2e
 //
-// Needs LM Studio (default http://127.0.0.1:1234/v1) with a tool-capable vision
-// model, a reasoning model and a small model the LM Studio tests may load and
-// eject; override with E2E_BASE_URL / E2E_MODEL / E2E_REASONING_MODEL /
-// E2E_SMALL_MODEL. Each run gets a fresh copy of
+// Needs LM Studio (default http://127.0.0.1:1234/v1) with one small tool-capable
+// vision model (default qwen/qwen3-vl-4b), which the LM Studio tests also
+// eject, load and resize through the panel; override with E2E_BASE_URL /
+// E2E_MODEL / E2E_SMALL_MODEL. Reasoning is proven against a scripted
+// server (fakeThinker.ts), so no reasoning model is ever loaded. Each run gets a fresh copy of
 // test-integration/e2e/workspace, so edits the agent makes never touch the repo.
 import * as fs from 'node:fs';
 import * as os from 'node:os';

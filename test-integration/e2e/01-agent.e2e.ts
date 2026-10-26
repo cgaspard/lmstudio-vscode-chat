@@ -2,12 +2,8 @@
 // streaming markdown, reasoning blocks and the effort control, the context
 // meter and tok/s.
 import * as assert from 'node:assert';
-import { assistantText, ask, freshChat, h, lmStudioModels, read, REASONING_MODEL, until } from './lib';
-
-/** Whether LM Studio reports the reasoning model as one that can think. */
-async function reasons(): Promise<boolean> {
-  return !!(await lmStudioModels()).find((m) => m.key === REASONING_MODEL)?.reasoning;
-}
+import { FakeThinker, THINKER_MODEL } from './fakeThinker';
+import { ask, freshChat, h, lmStudioModels, MODEL, read, until, useServer } from './lib';
 
 describe('e2e · the agent', function () {
   it('reads a file with a tool and answers from it', async () => {
@@ -61,36 +57,53 @@ describe('e2e · the agent', function () {
     assert.match(String(await h.text('.msg.assistant pre code')), /console\.log\(42\)/);
   });
 
-  it('a reasoning model shows its thinking in a collapsible block', async () => {
-    await freshChat({ model: REASONING_MODEL });
-    await ask('What is 17 * 23? Think it through, then answer with just the number.', 600_000);
-    assert.match(await assistantText(), /391/);
-    if (await reasons()) {
-      assert.ok((await h.count('.part-reasoning')) > 0, 'a thinking block rendered');
-    } else {
-      // The test model reports no reasoning: no thinking block may appear
-      // (point E2E_REASONING_MODEL at a reasoning model to see one).
-      assert.strictEqual(await h.count('.part-reasoning'), 0, 'no thinking block for a model that does not reason');
-    }
+  // A scripted model that streams reasoning_content before its answer proves
+  // the thinking path (engine parses reasoning, events flow, the panel draws
+  // the block) without loading a large reasoning model into a shared LM Studio.
+  describe('with a reasoning model (scripted)', function () {
+    const fake = new FakeThinker();
+    let back: (() => Promise<void>) | undefined;
+    before(async () => {
+      await fake.start();
+      await freshChat(); // connect first, so switching back has somewhere to go
+      back = await useServer(fake.url);
+    });
+    after(async () => {
+      await back?.();
+      await fake.stop();
+    });
+
+    it('shows its thinking in a collapsible block', async () => {
+      await freshChat({ model: THINKER_MODEL });
+      const reply = await ask('What is 17 * 23?');
+      assert.match(reply, /391/);
+      await until(async () => (await h.count('.part-reasoning')) > 0, 10_000, 'the thinking block');
+      assert.match(String(await h.text('.part-reasoning')), /17 times 20/, 'the reasoning text streamed into the block');
+    });
+
+    it('/effort off asks the model not to reason', async () => {
+      await freshChat({ model: THINKER_MODEL });
+      await h.setInput('/effort off');
+      await h.keydown('Enter');
+      await until(async () => (await h.allText('.sys-chip')).some((t) => /effort set to Off/i.test(t)), 10_000, 'the effort chip');
+      const before = fake.requests.length;
+      await ask('What is 17 * 23?');
+      const sent = fake.requests.slice(before).at(-1);
+      assert.ok(sent, 'the prompt reached the model');
+      assert.strictEqual(sent.reasoning_effort, 'none', `the request carries reasoning_effort: none (${JSON.stringify(sent).slice(0, 200)})`);
+      await h.setInput('/effort auto'); // back to the model's own default
+      await h.keydown('Enter');
+    });
   });
 
-  it('/effort follows what the model reports: off silences a reasoning model, a plain one has no control', async () => {
-    await freshChat({ model: REASONING_MODEL });
-    if (!(await reasons())) {
-      await h.setInput('/effort');
-      await h.keydown('Enter');
-      await until(async () => (await h.allText('.sys-chip')).some((t) => /no reasoning support/i.test(t)), 10_000, 'the no-reasoning chip');
-      return;
+  it('/effort says a model that reports no reasoning has no effort control', async function () {
+    await freshChat();
+    if ((await lmStudioModels()).find((m) => m.key === MODEL)?.reasoning) {
+      this.skip(); // E2E_MODEL reasons; the scripted model covers the control
     }
-    await h.setInput('/effort off');
+    await h.setInput('/effort');
     await h.keydown('Enter');
-    await until(async () => (await h.allText('.sys-chip')).some((t) => /effort set to Off/i.test(t)), 10_000, 'the effort chip');
-    await ask('What is 6 * 7? Answer with just the number.', 600_000);
-    assert.match(await assistantText(), /42/);
-    assert.strictEqual(await h.count('.part-reasoning'), 0, 'no thinking block with effort off');
-    // Back to the model's own default for the rest of the run.
-    await h.setInput('/effort auto');
-    await h.keydown('Enter');
+    await until(async () => (await h.allText('.sys-chip')).some((t) => /no reasoning support/i.test(t)), 10_000, 'the no-reasoning chip');
   });
 
   it('reports generation speed and fills the context meter', async () => {
