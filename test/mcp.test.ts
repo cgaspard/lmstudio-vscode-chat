@@ -8,6 +8,7 @@ import {
   normalizeEntry,
   resolveMapVars,
   resolveServerVars,
+  withLocalEnvironment,
 } from '../src/core/mcp';
 
 // ---- normalizeEntry: stdio / local ---------------------------------------
@@ -258,4 +259,31 @@ test('augmentedPath: handles an empty/undefined current PATH', () => {
   const out = augmentedPath(undefined, '/home/me', ':');
   assert.ok(out.includes('/opt/homebrew/bin'));
   assert.equal(out.startsWith(':'), false); // no leading empty segment
+});
+
+test('local MCP servers receive the extra environment', () => {
+  const servers = { srv: { type: 'local', command: ['npx', 'thing'] } as { type: string; command: string[]; environment?: Record<string, string> } };
+  const got = withLocalEnvironment(servers, { PATH: '/opt/homebrew/bin:/usr/bin' });
+  assert.deepEqual(got.srv.environment, { PATH: '/opt/homebrew/bin:/usr/bin' });
+});
+
+test("a server's own environment is preserved and wins over ours", () => {
+  const servers = {
+    srv: { type: 'local', command: ['x'], environment: { TOKEN: 'abc', PATH: '/deliberate' } } as {
+      type: string;
+      command: string[];
+      environment?: Record<string, string>;
+    },
+  };
+  const got = withLocalEnvironment(servers, { PATH: '/usr/bin', LANG: 'C' });
+  assert.equal(got.srv.environment?.TOKEN, 'abc');
+  assert.equal(got.srv.environment?.PATH, '/deliberate');
+  assert.equal(got.srv.environment?.LANG, 'C');
+});
+
+test('remote MCP servers are left completely untouched', () => {
+  const remote = { type: 'remote' as const, url: 'https://example.com' } as { type: string; url: string; environment?: Record<string, string> };
+  const got = withLocalEnvironment({ srv: remote }, { PATH: '/usr/bin' });
+  assert.deepEqual(got.srv, remote);
+  assert.equal('environment' in got.srv, false);
 });

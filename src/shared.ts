@@ -102,6 +102,18 @@ export interface UiMcpServer {
 }
 
 // ---- Host -> Webview -----------------------------------------------------
+/** How a message sent while the agent is working reaches it. */
+export type UiDelivery = 'steer' | 'queue';
+
+/** A message sent while the agent was working that it has not picked up yet. */
+export interface UiInboxItem {
+  inboxID: string;
+  text: string;
+  delivery: UiDelivery;
+  /** Images/files riding along with the text. */
+  files: number;
+}
+
 export type HostToWebview =
   | {
       type: 'init';
@@ -135,6 +147,8 @@ export type HostToWebview =
   // A /compact run is in flight (block input) or has finished (with the summary
   // text, if OpenCode produced one). `summary` is only set when done === true.
   | { type: 'compacting'; active: boolean; summary?: string }
+  /** The session's pending (undelivered) messages, sent when a session is shown. */
+  | { type: 'inbox'; items: UiInboxItem[] }
   | { type: 'activeFile'; path: string | null; chars: number }
   // The current editor selection (or null when nothing is selected). Drives the
   // excludable "selection" pill in the composer; the raw text is attached as
@@ -193,7 +207,17 @@ export type WebviewToHost =
       images?: UiImage[];
       includeActiveFile?: boolean;
       includeSelection?: boolean;
+      /**
+       * Only matters while the agent is working: `steer` (Enter) injects the
+       * message at the agent's next step, `queue` (Alt+Enter) holds it until the
+       * current turn ends.
+       */
+      delivery?: UiDelivery;
     }
+  /** Move a pending message between steering and the queue. */
+  | { type: 'inboxSetDelivery'; inboxID: string; delivery: UiDelivery }
+  /** Withdraw a pending message before the agent sees it. */
+  | { type: 'inboxCancel'; inboxID: string }
   | { type: 'selectModel'; modelID: string }
   | { type: 'loadModel'; modelID: string }
   | { type: 'unloadModel'; modelID: string }

@@ -51,6 +51,9 @@ export function errorText(err: unknown): string {
 }
 
 const CONNECTION_PATTERNS: RegExp[] = [
+  // The embedded engine was stopped (a settings change or restart) while a
+  // panel still held it: reconnect to the new one, exactly like a dead server.
+  /opencode engine stopped/i,
   /fetch failed/i,
   /failed to fetch/i,
   /load failed/i, // Safari/webkit fetch failure wording

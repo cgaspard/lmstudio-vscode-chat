@@ -330,3 +330,25 @@ export function augmentedPath(
   }
   return [...existing, ...added].join(sep);
 }
+
+/**
+ * Layer environment variables onto every stdio MCP server in a discovered map
+ * (used to hand them an augmented PATH: they inherit the extension host's
+ * environment, which can be minimal when VS Code was launched from a GUI).
+ *
+ * A server's own `environment` wins: a value set there is a deliberate choice.
+ * Remote servers are untouched — they are not processes OpenCode spawns.
+ */
+export function withLocalEnvironment<T extends { type: string; environment?: Record<string, string> }>(
+  servers: Record<string, T>,
+  env: Record<string, string>,
+): Record<string, T> {
+  const out: Record<string, T> = {};
+  for (const [name, server] of Object.entries(servers)) {
+    out[name] =
+      server.type === 'local'
+        ? { ...server, environment: { ...env, ...(server.environment ?? {}) } }
+        : server;
+  }
+  return out;
+}

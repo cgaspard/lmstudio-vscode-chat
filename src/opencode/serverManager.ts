@@ -1,67 +1,79 @@
-import { ChildProcess, execFile, spawn } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { pathToFileURL } from 'node:url';
 import * as vscode from 'vscode';
 import { ExtensionConfig, getConfig } from '../config';
-import { isSupportedOpencodeVersion, resolveBinaryPath } from '../core/binary';
 import { opencodeContextLimit } from '../core/context';
 import { variantsForModel } from '../core/effort';
-import { HOST_XDG_ENV, hostXdgForChildren, snapshotHostXdg, withHostXdg } from '../core/hostenv';
-import { augmentedPath } from '../core/mcp';
+import { augmentedPath, withLocalEnvironment } from '../core/mcp';
 import { opencodePermission } from '../core/permission';
+import { toEngineProviderID } from '../core/providerIds';
 import { LMStudioClient } from '../lmstudio/client';
 import { log, logError } from '../logger';
 import { discoverMcpServers } from '../mcp/discovery';
-import { OpencodeClient } from './client';
+import { createHost, type SdkHost } from './embedded';
 import { BUILD_PROMPT, PLAN_PROMPT } from './prompts';
+import { OpencodeV2Client } from './v2client';
+
+/** The provider id the panel (and its history, settings and agents) uses for LM Studio. */
+export const LMSTUDIO_PROVIDER_ID = 'lmstudio';
 
 export interface ServerStartResult {
+  /** Where the engine runs, for logs only: there is no network address. */
   baseUrl: string;
-  client: OpencodeClient;
+  client: OpencodeV2Client;
 }
 
 export interface Disposable {
   dispose(): void;
 }
 
+/** Shown in logs where a server URL used to be. */
+const EMBEDDED_URL = 'embedded://opencode';
+
 /**
- * Owns the lifecycle of a headless `opencode serve` process, configured to talk
- * to the local LM Studio server. Config is injected via OPENCODE_CONFIG_CONTENT
- * so nothing is written to the user's workspace or global config.
+ * Owns the embedded OpenCode engine (OpenCode 2, running in-process through
+ * @opencode/sdk), configured to talk to the local LM Studio server. Config is
+ * handed to the engine in memory, so nothing is written to the user's
+ * workspace or global config.
+ *
+ * Still named a "server" manager: the bridge's lifecycle (start, stale-config
+ * restart, dispose) is unchanged, only what it starts is.
  */
 export class OpencodeServerManager {
-  private proc: ChildProcess | undefined;
-  private baseUrl: string | undefined;
-  private client: OpencodeClient | undefined;
+  private host: SdkHost | undefined;
+  private client: OpencodeV2Client | undefined;
   private starting: Promise<ServerStartResult> | undefined;
   /**
-   * The (LM Studio baseUrl, apiKey) pair the running server's config was built
-   * from. The config is baked into the process at spawn, so if either changes
+   * The previous engine's shutdown. A new host must not open the same database
+   * and folders while the old one is still closing (two engines in one
+   * process over one SQLite file), so a start waits for this first.
+   */
+  private closing: Promise<void> = Promise.resolve();
+  /**
+   * The (LM Studio baseUrl, apiKey) pair the running engine's config was built
+   * from. The config is baked into the host at creation, so if either changes
    * afterwards (server switch, key edit) the running instance is stale and
-   * start() must respawn instead of reusing it.
+   * start() must recreate it instead of reusing it.
    */
   private bakedIdentity: string | undefined;
   private readonly exitListeners = new Set<() => void>();
-  /** Procs we killed on purpose, so their `exit` doesn't trigger reconnects. */
-  private readonly killed = new WeakSet<ChildProcess>();
 
   constructor(
     private readonly cfg: ExtensionConfig,
     private readonly lmStudio: LMStudioClient,
-    /** Extension install dir — holds the bundled `bin/opencode[.exe]`. */
+    /** Extension install dir — holds the bundled engine in `opencode-sdk/`. */
     private readonly extensionPath: string,
-    /** Private data dir for our managed server, isolated from the user's. */
+    /** Private data dir for the engine, isolated from the user's own OpenCode. */
     private readonly dataDir: string,
   ) {}
 
   get isRunning(): boolean {
-    return !!this.proc && !this.proc.killed;
+    return !!this.client;
   }
 
   /**
-   * Register a callback fired whenever the server process exits unexpectedly.
+   * Register a callback fired whenever the engine stops unexpectedly.
    * Multiple bridges (sidebar + secondary + editor tabs) share one manager, so
    * each registers its own listener and disposes it on teardown.
    */
@@ -72,8 +84,8 @@ export class OpencodeServerManager {
 
   private currentIdentity(): string {
     // permissionMode is part of the identity for the same reason as url/key:
-    // it's baked into the config at spawn, so a running instance with a
-    // different mode is stale and must respawn on the next start().
+    // it's baked into the config at creation, so a running instance with a
+    // different mode is stale and must be recreated on the next start().
     return JSON.stringify([
       this.lmStudio.getBaseUrl(),
       this.lmStudio.getApiKey() ?? null,
@@ -81,16 +93,16 @@ export class OpencodeServerManager {
     ]);
   }
 
-  /** Start (or return the in-flight start of) the server. Idempotent. */
+  /** Start (or return the in-flight start of) the engine. Idempotent. */
   async start(): Promise<ServerStartResult> {
-    if (this.client && this.baseUrl) {
+    if (this.client) {
       if (this.bakedIdentity === this.currentIdentity()) {
-        return { baseUrl: this.baseUrl, client: this.client };
+        return { baseUrl: EMBEDDED_URL, client: this.client };
       }
       // The LM Studio url/key changed since this instance was configured
-      // (e.g. a key edit, or a spawn that raced ahead of key hydration) —
+      // (e.g. a key edit, or a start that raced ahead of key hydration) —
       // reusing it would send chat requests with stale credentials.
-      log('opencode server config is stale (LM Studio url/key changed) — respawning');
+      log('opencode config is stale (LM Studio url/key changed) — recreating the engine');
       this.dispose();
     }
     if (this.starting) {
@@ -103,196 +115,30 @@ export class OpencodeServerManager {
   }
 
   private async doStart(): Promise<ServerStartResult> {
-    const bin = await this.resolveBinary();
-    if (!bin) {
-      // The extension bundles a platform binary, so this is effectively
-      // unreachable in shipped builds; it only fires for a corrupt install or
-      // a bad `opencodePath` override.
-      throw new Error(
-        'opencode binary not found. The bundled binary may be missing or unreadable; reinstall the extension, or set "lmstudioCode.opencodePath" to a valid opencode binary.',
-      );
-    }
-    await this.prepareBundledBinary(bin);
-
+    await this.closing;
     const bakedIdentity = this.currentIdentity();
     const configContent = await this.buildConfigContent();
     const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? os.homedir();
-    const env = this.buildEnv(configContent);
-
-    log(`starting opencode server: ${bin} serve --port ${this.cfg.serverPort} (cwd=${cwd})`);
-
-    const proc = spawn(
-      bin,
-      ['serve', '--port', String(this.cfg.serverPort), '--hostname', '127.0.0.1'],
-      { cwd, env },
-    );
-    this.proc = proc;
-
-    let baseUrl: string;
-    let client: OpencodeClient;
-    try {
-      baseUrl = await this.awaitListening(proc);
-      log(`opencode server listening at ${baseUrl}`);
-      client = new OpencodeClient(baseUrl);
-      // Confirm health before declaring ready.
-      await this.waitHealthy(client);
-    } catch (err) {
-      // A server that is listening but never healthy keeps running, and every
-      // retry spawns another — kill this one before the caller tries again.
-      this.killed.add(proc);
-      proc.kill();
-      if (this.proc === proc) {
-        this.proc = undefined;
-      }
-      throw err;
-    }
-    this.baseUrl = baseUrl;
-    this.client = client;
+    const version = this.engineVersion();
+    log(`starting embedded opencode ${version} (cwd=${cwd})`);
+    const host = await createHost(this.extensionPath, { root: this.dataDir }, configContent);
+    this.host = host;
+    this.client = new OpencodeV2Client(host, cwd, version);
     this.bakedIdentity = bakedIdentity;
-
-    proc.on('exit', (code, signal) => {
-      const intentional = this.killed.has(proc);
-      log(`opencode server exited (code=${code}, signal=${signal}${intentional ? ', intentional' : ''})`);
-      this.killed.delete(proc);
-      if (this.proc === proc) {
-        this.proc = undefined;
-        this.baseUrl = undefined;
-        this.client = undefined;
-      }
-      // Only notify on an *unexpected* exit so bridges can self-heal; a dispose
-      // / restart we triggered ourselves must not kick a reconnect storm.
-      if (!intentional) {
-        for (const cb of [...this.exitListeners]) {
-          try {
-            cb();
-          } catch (err) {
-            logError('exit listener threw', err);
-          }
-        }
-      }
-    });
-
-    return { baseUrl, client };
+    log('embedded opencode ready');
+    return { baseUrl: EMBEDDED_URL, client: this.client };
   }
 
-  /** Resolve a URL from the server's stdout/stderr "listening on ..." line. */
-  private awaitListening(proc: ChildProcess): Promise<string> {
-    return new Promise<string>((resolve, reject) => {
-      let settled = false;
-      const urlRe = /listening on\s+(https?:\/\/[^\s]+)/i;
-
-      const onData = (chunk: Buffer) => {
-        const text = chunk.toString();
-        log(`[opencode] ${text.trimEnd()}`);
-        const m = text.match(urlRe);
-        if (m && !settled) {
-          settled = true;
-          cleanup();
-          resolve(m[1].replace(/\/+$/, ''));
-        }
-      };
-      const onErr = (err: Error) => {
-        if (!settled) {
-          settled = true;
-          cleanup();
-          reject(err);
-        }
-      };
-      const onExit = (code: number | null) => {
-        if (!settled) {
-          settled = true;
-          cleanup();
-          reject(new Error(`opencode server exited before listening (code=${code})`));
-        }
-      };
-      const timer = setTimeout(() => {
-        if (!settled) {
-          settled = true;
-          cleanup();
-          reject(new Error('timed out waiting for opencode server to start (30s)'));
-        }
-      }, 30000);
-
-      const cleanup = () => {
-        clearTimeout(timer);
-        proc.stdout?.off('data', onData);
-        proc.stderr?.off('data', onData);
-        proc.off('error', onErr);
-        proc.off('exit', onExit);
-      };
-
-      proc.stdout?.on('data', onData);
-      proc.stderr?.on('data', onData);
-      proc.on('error', onErr);
-      proc.on('exit', onExit);
-    });
-  }
-
-  private async waitHealthy(client: OpencodeClient): Promise<void> {
-    for (let i = 0; i < 20; i++) {
-      try {
-        const h = await client.health();
-        if (h.healthy) {
-          return;
-        }
-      } catch {
-        // not up yet
-      }
-      await new Promise((r) => setTimeout(r, 250));
-    }
-    throw new Error('opencode server did not become healthy');
-  }
-
-  /**
-   * Environment for the managed server. Pins OpenCode's data/state/config/cache
-   * dirs under our private `dataDir` (via the XDG vars OpenCode honors on all
-   * platforms) so this instance can never share session/auth/state with a
-   * user's own OpenCode install — regardless of version. Config itself is still
-   * injected in-memory via OPENCODE_CONFIG_CONTENT; XDG_CONFIG_HOME just keeps
-   * any file OpenCode writes out of the user's real config dir.
-   */
-  private buildEnv(configContent: string): NodeJS.ProcessEnv {
-    const sub = (name: string) => path.join(this.dataDir, name);
-    // Best-effort: create the root so OpenCode doesn't fail on a missing dir.
+  /** The bundled engine's version, from the stamp the build writes. */
+  private engineVersion(): string {
     try {
-      fs.mkdirSync(this.dataDir, { recursive: true });
-    } catch (err) {
-      logError('could not create opencode data dir', err);
+      return fs.readFileSync(path.join(this.extensionPath, 'opencode-sdk', 'version'), 'utf8').split('\n')[0].trim();
+    } catch {
+      return 'unknown';
     }
-    // Snapshot the host's XDG values before ours replace them, so the bundled
-    // plugin can hand them back to the commands the agent runs.
-    const hostXdg = JSON.stringify(snapshotHostXdg(process.env));
-    const env: NodeJS.ProcessEnv = {
-      ...process.env,
-      OPENCODE_CONFIG_CONTENT: configContent,
-      NO_COLOR: '1',
-      // Augment PATH so stdio MCP servers (command: ["npx"/"uvx"/...]) can be
-      // spawned even when the extension host was launched from a GUI context
-      // with a minimal PATH (the #1 reason npx-based MCP servers fail to start).
-      // Existing entries are kept first so a user's own toolchain still wins.
-      PATH: augmentedPath(process.env.PATH, os.homedir(), path.delimiter),
-      [HOST_XDG_ENV]: hostXdg,
-      // Sandbox all on-disk state to our managed dir.
-      //
-      // These are inherited by every process the agent's `bash` tool spawns,
-      // where they break XDG-respecting CLIs (`gh auth status` reports "not
-      // logged in", `helm` loses its repo config). `opencode-plugin/
-      // xdg-passthrough.js` restores the snapshot above for those children;
-      // see src/core/hostenv.ts.
-      XDG_DATA_HOME: sub('data'),
-      XDG_CONFIG_HOME: sub('config'),
-      XDG_CACHE_HOME: sub('cache'),
-      XDG_STATE_HOME: sub('state'),
-    };
-    // A user-exported OPENCODE_SERVER_PASSWORD (for their own remote OpenCode)
-    // would make our managed server demand basic auth — and this extension is
-    // its only client and sends none, so every request would 401. The server
-    // is loopback-only with isolated state; it must never be password-gated.
-    delete env.OPENCODE_SERVER_PASSWORD;
-    return env;
   }
 
-  /** Build the OPENCODE_CONFIG_CONTENT JSON injecting the LM Studio provider. */
+  /** Build the engine config declaring the LM Studio provider. */
   private async buildConfigContent(): Promise<string> {
     const models: Record<string, Record<string, unknown>> = {};
     const ctx = getConfig().minContextLength; // read fresh so context-size changes apply on restart
@@ -330,41 +176,53 @@ export class OpencodeServerManager {
     }
     // MCP servers discovered from .mcp.json / .vscode/mcp.json / VS Code user
     // settings / our own `lmstudioCode.mcpServers`. Tokens like ${VAR} are
-    // already resolved to literals (OPENCODE_CONFIG_CONTENT is not substituted
-    // by OpenCode), so what we inject is ready to spawn as-is. Their tools flow
+    // already resolved to literals (the injected config is not substituted by
+    // OpenCode), so what we inject is ready to spawn as-is. Their tools flow
     // through OpenCode's existing tool-call + permission machinery for free.
     let mcp: ReturnType<typeof discoverMcpServers>['map'] = {};
     try {
-      // stdio servers are spawned by OpenCode and would otherwise inherit the
-      // pinned XDG dirs the same way shell commands do; the `shell.env` plugin
-      // does not reach them, so hand the values over per-server instead.
-      mcp = withHostXdg(
-        discoverMcpServers().map,
-        hostXdgForChildren(process.env, os.homedir(), path.join),
-      );
+      // stdio servers inherit the extension host's environment. When VS Code
+      // was launched from a GUI context its PATH can be minimal (the #1 reason
+      // npx/uvx-based servers fail to start), so add the usual install
+      // locations; existing entries stay first so the user's toolchain wins.
+      mcp = withLocalEnvironment(discoverMcpServers().map, {
+        PATH: augmentedPath(process.env.PATH, os.homedir(), path.delimiter),
+      });
     } catch (err) {
       logError('could not discover MCP servers', err);
     }
 
-    // Override the build/plan agent prompts so the model identifies as
-    // "LM Studio Code" instead of OpenCode's built-in "You are opencode…".
-    const pluginUrl = this.xdgPluginUrl();
+    // OpenCode 2's built-in LM Studio plugin owns the `lmstudio` provider id:
+    // once it discovers models it replaces everything declared under that id
+    // (our context limits, vision flags and reasoning variants). So the
+    // provider is declared under its engine id, and mapped back wherever it
+    // crosses the boundary (see core/providerIds).
+    const providerID = toEngineProviderID(LMSTUDIO_PROVIDER_ID);
     const config = {
       $schema: 'https://opencode.ai/config.json',
-      // Hands the host's real XDG_* values back to the agent's shell commands.
-      ...(pluginUrl ? { plugin: [pluginUrl] } : {}),
+      // Only our LM Studio provider. OpenCode would otherwise also enable any
+      // provider it can find a key for in the environment (an exported
+      // OPENAI_API_KEY) and auto-discover local servers — and its internal
+      // title/summary agents could then bill a key the user never gave this
+      // extension.
+      enabled_providers: [providerID],
       // Tool-approval posture (default / strict / bypass), read fresh so a
       // mode change applies on restart. Every mode keeps the built-in
       // `question` tool at "allow": the picker is the interaction (the bridge
-      // relays `question.asked` and replies via the /question API), so an
+      // relays `question.asked` and replies through the form API), so an
       // approval gate in front of it would be redundant.
       permission: opencodePermission(getConfig().permissionMode),
+      // Override the build/plan agent prompts so the model identifies as
+      // "LM Studio Code" instead of OpenCode's built-in "You are opencode…".
       agent: {
         build: { prompt: BUILD_PROMPT },
         plan: { prompt: PLAN_PROMPT },
       },
+      // OpenCode 2 ships its todo tool behind a flag; the panel's live todo
+      // list renders from it.
+      experimental: { todo: true },
       provider: {
-        lmstudio: {
+        [providerID]: {
           npm: '@ai-sdk/openai-compatible',
           name: 'LM Studio (local)',
           options: {
@@ -382,13 +240,11 @@ export class OpencodeServerManager {
   }
 
   /**
-   * Provider `apiKey` option for the injected config. OPENCODE_CONFIG_CONTENT
-   * is process environment, and OpenCode's stdio MCP servers inherit that
-   * environment — so a literal key there would be handed to every third-party
-   * MCP process. Instead the key is written to a 0600 file in our private
-   * dataDir and referenced via OpenCode's `{file:...}` placeholder, which is
-   * substituted when the server loads the config (verified against 1.17.18).
-   * Falls back to the literal only if the file can't be written.
+   * Provider `apiKey` option for the injected config. The key is written to a
+   * 0600 file in our private dataDir and referenced via OpenCode's
+   * `{file:...}` placeholder, substituted when the engine loads the config, so
+   * the config text itself never carries a secret. Falls back to the literal
+   * only if the file can't be written.
    */
   private apiKeyOption(): Record<string, string> {
     const apiKey = this.lmStudio.getApiKey();
@@ -408,102 +264,27 @@ export class OpencodeServerManager {
     }
   }
 
-  /**
-   * `file://` URL of the bundled `shell.env` plugin, or null when it is missing
-   * (corrupt install / a packaging change that dropped it). Returning null just
-   * means shell commands keep the pinned XDG values — the pre-fix behaviour —
-   * and a plugin that fails to load is likewise non-fatal: verified against
-   * OpenCode 1.18.4 that a syntactically broken plugin still leaves the server
-   * serving requests normally.
-   */
-  private xdgPluginUrl(): string | null {
-    const p = path.join(this.extensionPath, 'opencode-plugin', 'xdg-passthrough.js');
-    if (!fs.existsSync(p)) {
-      logError('xdg passthrough plugin missing; agent shell commands keep pinned XDG dirs', p);
-      return null;
-    }
-    return pathToFileURL(p).href;
-  }
-
-  /** Absolute path to the binary bundled inside the VSIX (if present). */
-  private bundledBinary(): string | null {
-    const exe = process.platform === 'win32' ? 'opencode.exe' : 'opencode';
-    const p = path.join(this.extensionPath, 'bin', exe);
-    return fs.existsSync(p) ? p : null;
-  }
-
-  /**
-   * On macOS, a binary delivered inside a Marketplace VSIX can carry the
-   * `com.apple.quarantine` attribute, which makes Gatekeeper kill it on exec
-   * ("cannot be opened because the developer cannot be verified"). Strip it,
-   * but only from our own bundled binary — never touch a user-provided one.
-   * Best-effort and idempotent: ignore failures (e.g. xattr missing, already
-   * clean, SIP edge cases) so this never blocks startup.
-   */
-  private async prepareBundledBinary(bin: string): Promise<void> {
-    if (process.platform !== 'darwin') {
-      return;
-    }
-    if (bin !== this.bundledBinary()) {
-      return; // user-provided binary: leave it untouched
-    }
-    await new Promise<void>((resolve) => {
-      const child = spawn('xattr', ['-d', 'com.apple.quarantine', bin]);
-      child.on('error', () => resolve()); // xattr absent / unexpected — ignore
-      child.on('close', () => resolve()); // non-zero just means "nothing to remove"
-    });
-  }
-
-  /**
-   * Find the opencode binary: the `lmstudioCode.opencodePath` override if set
-   * and present, otherwise the binary bundled in the VSIX. A user's own install
-   * is never picked up implicitly — see `resolveBinaryPath`.
-   * Returns null only if both fail (corrupt install / bad override).
-   */
-  private async resolveBinary(): Promise<string | null> {
-    // Read fresh: the cfg snapshot is from activation, so a changed override
-    // would otherwise only apply after a window reload.
-    const overridePath = getConfig().opencodePath;
-    const bin = resolveBinaryPath({
-      overridePath,
-      bundled: this.bundledBinary(),
-      exists: (p) => fs.existsSync(p),
-    });
-    if (bin && bin === overridePath) {
-      const version = await this.binaryVersion(bin);
-      if (!isSupportedOpencodeVersion(version)) {
-        logError(
-          `opencodePath points at ${version}; only OpenCode 1.x is supported, so the server will not become healthy. Clear the setting to use the bundled binary.`,
-          bin,
-        );
-      }
-    }
-    return bin;
-  }
-
-  /** `<bin> --version` output, or '' if it can't be run (treated as supported). */
-  private binaryVersion(bin: string): Promise<string> {
-    return new Promise<string>((resolve) => {
-      execFile(bin, ['--version'], { timeout: 5000 }, (err, stdout) =>
-        resolve(err ? '' : stdout.trim()),
-      );
-    });
-  }
-
   async restart(): Promise<ServerStartResult> {
     this.dispose();
     return this.start();
   }
 
   dispose(): void {
-    if (this.proc && !this.proc.killed) {
-      log('stopping opencode server');
-      this.killed.add(this.proc); // mark intentional so exit doesn't trigger reconnect
-      this.proc.kill();
+    if (this.client) {
+      log('stopping embedded opencode');
     }
-    this.proc = undefined;
-    this.baseUrl = undefined;
+    this.client?.dispose();
+    const host = this.host;
+    this.host = undefined;
     this.client = undefined;
     this.bakedIdentity = undefined;
+    // Closing releases the engine's watchers, MCP children and database. The
+    // next start waits for it (see `closing`).
+    if (host) {
+      const previous = this.closing;
+      this.closing = previous
+        .then(() => host.close())
+        .catch((err: unknown) => logError('closing embedded opencode', err));
+    }
   }
 }

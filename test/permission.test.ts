@@ -17,8 +17,8 @@ test('normalizePermissionMode accepts the known modes and falls back on garbage'
   assert.equal(normalizePermissionMode(42), 'default');
 });
 
-test('default mode only pre-allows the question tool', () => {
-  assert.deepEqual(opencodePermission('default'), { question: 'allow' });
+test('default mode pre-allows questions and asks before leaving the workspace', () => {
+  assert.deepEqual(opencodePermission('default'), { question: 'allow', external_directory: 'ask' });
 });
 
 test('bypass mode is a single wildcard allow (what a bare "allow" normalizes to)', () => {
