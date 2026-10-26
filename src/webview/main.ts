@@ -176,6 +176,7 @@ let sessionTotals = newSessionTotals();
 // Decision logic lives in ../core/compaction (pure + unit-tested).
 const compaction: CompactionState = newCompactionState();
 let lastCompactionChip: HTMLElement | null = null; // so the summary can be attached when it arrives
+let pendingCompactionSummary = ''; // a summary that arrived before its chip
 
 // ---------------------------------------------------------------------------
 // Icons
@@ -1176,6 +1177,11 @@ function showCompactionChip(): HTMLElement {
   });
   messagesEl.appendChild(el);
   lastCompactionChip = el;
+  if (pendingCompactionSummary) {
+    const summary = pendingCompactionSummary;
+    pendingCompactionSummary = '';
+    attachCompactionSummary(summary);
+  }
   toggleWelcome();
   scrollToBottom();
   return el;
@@ -1183,14 +1189,18 @@ function showCompactionChip(): HTMLElement {
 
 // Attach the summary markdown OpenCode produced to the most recent chip, making
 // it expandable. Called when the bridge reports the compaction finished.
+// The summary and the marker that creates the chip travel separately, so the
+// summary can arrive first: then it waits for the chip instead of landing on
+// an earlier compaction's chip (or nowhere).
 function attachCompactionSummary(summary: string): void {
-  const chip = lastCompactionChip;
-  if (!chip || !summary.trim()) {
+  if (!summary.trim()) {
     return;
   }
-  const head = chip.querySelector('.compaction-head') as HTMLButtonElement | null;
-  const body = chip.querySelector('.compaction-body') as HTMLElement | null;
-  if (!head || !body) {
+  const chip = lastCompactionChip;
+  const head = chip?.querySelector('.compaction-head') as HTMLButtonElement | null;
+  const body = chip?.querySelector('.compaction-body') as HTMLElement | null;
+  if (!head || !body || !head.disabled) {
+    pendingCompactionSummary = summary;
     return;
   }
   body.innerHTML = mdToHtml(summary);
@@ -2239,6 +2249,7 @@ function clearConversation(): void {
   compaction.suppressed.clear();
   compaction.pending = false;
   lastCompactionChip = null;
+  pendingCompactionSummary = '';
   state.pendingCompaction = false;
   todoCards.clear();
   todoCollapsed.clear();
