@@ -1,0 +1,21 @@
+version: 0.33.0
+date: 2026-10-26
+highlights:
+  - OpenCode 2 now runs inside the extension. There is no separate OpenCode server, port or password any more, nothing is left running when VS Code closes, and your chats from earlier versions carry over.
+  - Steer the agent while it works. Press Enter and it reads your message at its next step, or Alt+Enter to queue the message for after the turn.
+  - This is a pre-release of a new engine. If something that worked in the stable version breaks, please open an issue, and switch back with "Switch to Release Version".
+added:
+  - Steering and queueing. Messages waiting to be picked up sit above the composer, marked Steering or Queued. Switch one between the two, or cancel it before the agent sees it. Each lands in the transcript at the moment the agent read it, so the conversation stays in the order the model saw it.
+changed:
+  - The engine is OpenCode 2 (`@opencode/sdk` 2.1.4), embedded in the extension instead of a bundled 1.x binary run as a local server. The Marketplace serves a build for your OS and CPU (macOS, Linux and Windows, on x64 and arm64).
+  - Its sessions, database and settings live in the extension's own storage. An OpenCode you installed yourself (Homebrew, PATH, `~/.opencode`) is never used and never affected, whether it is 1.x or 2.x.
+  - MCP tools are offered to the model as direct tools, and `/mcp` shows each server's live status.
+  - The `/compact` chip shows the conversation summary as soon as the engine produces it.
+fixed:
+  - Text a model wrapped in a literal `<template>` tag no longer disappears from the chat.
+  - The Thinking control now updates when you pick a different model from the model menu.
+  - After "Restart OpenCode Server", an open panel reconnects to the new engine instead of failing the next message until a window reload.
+  - Your workspace agents, commands and skills are listed even right after the engine starts. They could be missing from the agent picker and the `/` menu for a moment, so a project command could answer "Unknown command".
+  - A file you close is dropped from the chat's context even when its tab event arrives before the editor change.
+removed:
+  - The `lmstudioCode.opencodePath` and `lmstudioCode.serverPort` settings. There is no OpenCode binary or server port to point at any more.
