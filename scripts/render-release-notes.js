@@ -46,10 +46,10 @@ for (const [key, label] of sections) {
 }
 
 out.push('---');
-out.push('Install the `.vsix` attached to this release via:');
+out.push('Install the `.vsix` for your platform attached to this release (darwin-arm64, darwin-x64, linux-x64, linux-arm64, win32-x64 or win32-arm64) via:');
 out.push('');
 out.push('```bash');
-out.push(`code --install-extension lmstudio-code-${data.version}.vsix`);
+out.push(`code --install-extension lmstudio-code-<platform>-${data.version}.vsix`);
 out.push('```');
 
 process.stdout.write(out.join('\n') + '\n');
