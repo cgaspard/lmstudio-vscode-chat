@@ -1887,6 +1887,7 @@ function renderModelMenu(): void {
       post({ type: 'selectModel', modelID: m.id });
       renderModels();
       renderMeter();
+      applyEffort(); // the Thinking control follows the newly selected model
       closeModelMenu();
     });
     // Action button loads / ejects. Loading also makes the model active (you
@@ -1901,6 +1902,7 @@ function renderModelMenu(): void {
         state.currentModel = m.id;
         post({ type: 'selectModel', modelID: m.id });
         renderMeter();
+        applyEffort();
         closeMenuOnLoad = true; // dismiss the menu once this load completes
       }
       state.loadingModels.add(m.id);
