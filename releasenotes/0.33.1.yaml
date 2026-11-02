@@ -1,0 +1,9 @@
+version: 0.33.1
+date: 2026-11-02
+highlights:
+  - A question the agent asks now leaves the chat once you answer it. The answered card used to stay at the bottom, below the agent's next output, so it looked like it was still waiting for you.
+fixed:
+  - Answering or skipping a question removes its card. Your answer stays on the question row in the transcript; expand the row to see what you picked.
+added: []
+changed: []
+removed: []
