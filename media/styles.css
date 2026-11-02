@@ -787,14 +787,6 @@ body {
   opacity: 0.5;
   cursor: default;
 }
-.question-card.resolved {
-  opacity: 0.75;
-}
-.question-resolved {
-  margin-top: 8px;
-  font-size: 11px;
-  color: var(--vscode-descriptionForeground);
-}
 
 .error-bubble {
   /* A soft tint derived from the theme's error hue. Deliberately NOT the

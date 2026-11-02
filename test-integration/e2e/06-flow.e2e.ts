@@ -67,6 +67,7 @@ describe('e2e · steering, stopping, questions, goals', function () {
     }
     await turn();
     assert.match(await assistantText(), /You chose.*Blue/i);
+    assert.strictEqual(await h.count('.question-card'), 0, 'the answered card is gone from the transcript');
   });
 
   it('/goal runs until the judge says the goal is met', async () => {
