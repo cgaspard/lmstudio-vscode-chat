@@ -1608,19 +1608,14 @@ function renderGoalRevision(proposed: string): void {
       <button class="perm-btn allow-once update">Update goal</button>
       <button class="perm-btn reject keep">Keep current</button>
     </div>`;
-  const resolve = (updated: boolean, note: string) => {
+  const resolve = (updated: boolean) => {
     if (updated) {
       post({ type: 'updateGoal', objective: proposed });
     }
-    card.querySelectorAll('button').forEach((b) => ((b as HTMLButtonElement).disabled = true));
-    card.classList.add('resolved');
-    const el = document.createElement('div');
-    el.className = 'perm-resolved';
-    el.textContent = note;
-    card.appendChild(el);
+    dismissCard(card);
   };
-  card.querySelector('.update')!.addEventListener('click', () => resolve(true, 'Goal updated'));
-  card.querySelector('.keep')!.addEventListener('click', () => resolve(false, 'Kept the current goal'));
+  card.querySelector('.update')!.addEventListener('click', () => resolve(true));
+  card.querySelector('.keep')!.addEventListener('click', () => resolve(false));
   messagesEl.appendChild(card);
   goalReviseCard = card;
   toggleWelcome();
@@ -1631,12 +1626,7 @@ function renderGoalRevision(proposed: string): void {
 function retireGoalRevision(): void {
   const card = goalReviseCard;
   if (card && !card.classList.contains('resolved')) {
-    card.querySelectorAll('button').forEach((b) => ((b as HTMLButtonElement).disabled = true));
-    card.classList.add('resolved');
-    const el = document.createElement('div');
-    el.className = 'perm-resolved';
-    el.textContent = 'Goal ended';
-    card.appendChild(el);
+    dismissCard(card);
   }
 }
 
@@ -2891,6 +2881,37 @@ function buildTodoHtml(todos: Todo[], mid: string): string {
     </div>`;
 }
 
+/**
+ * Take an answered card (approval, question, goal offer) out of the chat. The
+ * cards sit outside the assistant's message, so the agent's next output streams
+ * in above them, and one left behind stays at the bottom looking like it still
+ * wants input. The outcome shows elsewhere: on the tool row, or the goal bar.
+ */
+function dismissCard(card: HTMLElement): void {
+  card.classList.add('resolved');
+  card.remove();
+  toggleWelcome();
+}
+
+/**
+ * The run is over, so no approval or tool question is waiting any more. A Stop
+ * cancels a pending approval without an event for it, which left a card with
+ * live buttons for a request that no longer exists. A question the model
+ * printed as text has no request behind it and is answered after its turn.
+ */
+function retirePendingCards(): void {
+  permissionEls.forEach((card) => {
+    if (!card.classList.contains('resolved')) {
+      dismissCard(card);
+    }
+  });
+  questionEls.forEach((card, key) => {
+    if (!key.startsWith('local-') && !card.classList.contains('resolved')) {
+      dismissCard(card);
+    }
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Permissions
 // ---------------------------------------------------------------------------
@@ -2912,12 +2933,7 @@ function renderPermission(req: any): void {
     </div>`;
   const respond = (response: 'once' | 'always' | 'reject') => {
     post({ type: 'permission', sessionID: req.sessionID, permissionID: req.id, response });
-    card.querySelectorAll('button').forEach((b) => ((b as HTMLButtonElement).disabled = true));
-    card.classList.add('resolved');
-    const note = document.createElement('div');
-    note.className = 'perm-resolved';
-    note.textContent = response === 'reject' ? 'Denied' : `Allowed (${response})`;
-    card.appendChild(note);
+    dismissCard(card);
   };
   card.querySelector('.allow-once')!.addEventListener('click', () => respond('once'));
   card.querySelector('.allow-always')!.addEventListener('click', () => respond('always'));
@@ -2931,8 +2947,7 @@ function renderPermission(req: any): void {
 function resolvePermission(id: string): void {
   const card = permissionEls.get(id);
   if (card && !card.classList.contains('resolved')) {
-    card.querySelectorAll('button').forEach((b) => ((b as HTMLButtonElement).disabled = true));
-    card.classList.add('resolved');
+    dismissCard(card);
   }
 }
 
@@ -3097,15 +3112,6 @@ function renderQuestion(requestID: string | null, questions: QInfo[]): void {
   backBtn?.addEventListener('click', () => show(active - 1));
   nextBtn?.addEventListener('click', () => show(active + 1));
 
-  // An answered or skipped card goes away. The `question` tool row keeps the
-  // answer (the text fallback sends it as a message), and a card left behind
-  // sat below the agent's next output, still looking like it wanted input.
-  const dismiss = () => {
-    card.classList.add('resolved');
-    card.remove();
-    toggleWelcome();
-  };
-
   const submit = () => {
     if (card.classList.contains('resolved')) {
       return;
@@ -3124,7 +3130,7 @@ function renderQuestion(requestID: string | null, questions: QInfo[]): void {
         .join('\n');
       post({ type: 'send', text, effort: 'off' });
     }
-    dismiss();
+    dismissCard(card); // the question row keeps the answer; the fallback sent it as a message
   };
 
   submitBtn.addEventListener('click', submit);
@@ -3135,7 +3141,7 @@ function renderQuestion(requestID: string | null, questions: QInfo[]): void {
     if (requestID) {
       post({ type: 'questionReject', requestID });
     }
-    dismiss();
+    dismissCard(card);
   });
 
   messagesEl.appendChild(card);
@@ -3148,9 +3154,7 @@ function renderQuestion(requestID: string | null, questions: QInfo[]): void {
 function resolveQuestion(id: string): void {
   const card = questionEls.get(id);
   if (card && !card.classList.contains('resolved')) {
-    card.classList.add('resolved');
-    card.remove();
-    toggleWelcome();
+    dismissCard(card);
   }
 }
 
@@ -3674,6 +3678,7 @@ function handleEvent(event: OpencodeEvent): void {
       collapseReasoning();
       appendGenStat();
       setBusy(false);
+      retirePendingCards();
       renderMeter();
       if (turnTruncated) {
         // The turn ended because it ran out of output budget, not because the

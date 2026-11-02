@@ -6,7 +6,7 @@
 import * as assert from 'node:assert';
 import * as helpers from './helpers';
 
-const { openPanel, post, text, count, classes, click, waitFor } = helpers;
+const { openPanel, post, text, count, click, waitFor } = helpers;
 
 const MODELS = [{ id: 'qwen/qwen3-27b', name: 'qwen3-27b', loaded: true, maxContextLength: 262144 }];
 
@@ -54,11 +54,9 @@ describe('goal revision confirm flow', function () {
     assert.match((await text('.goal-revise-card .perm-detail')) ?? '', /farewell\.txt/);
   });
 
-  it('clicking Update resolves the card and reports the update', async () => {
+  it('clicking Update removes the card and reports the update', async () => {
     assert.ok(await click('.goal-revise-card .update'));
-    const cls = (await classes('.goal-revise-card'))[0] ?? '';
-    assert.ok(cls.includes('resolved'), 'card should be resolved after Update');
-    assert.match((await text('.goal-revise-card .perm-resolved')) ?? '', /Goal updated/);
+    assert.strictEqual(await count('.goal-revise-card'), 0, 'the answered card leaves the chat');
     // The host confirms with a goalEvent(updated) — the webview adds a chip.
     await post({ type: 'goalEvent', kind: 'updated', reason: 'create farewell.txt instead' });
     await waitFor('.sys-chip', (n) => n >= 1);
@@ -70,16 +68,13 @@ describe('goal revision confirm flow', function () {
     await post({ type: 'goalRevision', proposed: 'do something else entirely' });
     await waitFor('.goal-revise-card:not(.resolved)', (n) => n === 1);
     assert.ok(await click('.goal-revise-card:not(.resolved) .keep'));
-    assert.strictEqual(await count('.goal-revise-card:not(.resolved)'), 0, 'no unresolved cards left');
+    assert.strictEqual(await count('.goal-revise-card'), 0, 'the answered card leaves the chat');
   });
 
   it('clearing the goal retires an open offer', async () => {
     await post({ type: 'goalRevision', proposed: 'one more revision' });
     await waitFor('.goal-revise-card:not(.resolved)', (n) => n === 1);
     await post({ type: 'goal', goal: null });
-    await waitFor('.goal-revise-card:not(.resolved)', (n) => n === 0);
-    // The last card shows why it was retired.
-    const notes = await count('.goal-revise-card .perm-resolved');
-    assert.ok(notes >= 1, 'retired card keeps an explanatory note');
+    await waitFor('.goal-revise-card', (n) => n === 0);
   });
 });

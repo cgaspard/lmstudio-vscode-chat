@@ -106,4 +106,34 @@ describe('permission mode + abort notice', function () {
     assert.strictEqual(stoppedAfter, stoppedBefore + 1, 'both abort reports must collapse to ONE chip');
     assert.strictEqual(await count('.error-bubble'), bubblesBefore, 'an abort must not add red error bubbles');
   });
+
+  it('a stop takes the approval and question cards still waiting with it', async () => {
+    const event = (type: string, properties: Record<string, unknown>) => post({ type: 'event', event: { type, properties } });
+    await post({ type: 'busy', busy: true });
+    await event('permission.asked', { id: 'perm_zzz_stop', sessionID: 's', permission: 'read', patterns: ['/tmp/x'], metadata: { filePath: '/tmp/x' } });
+    await event('question.asked', {
+      id: 'q_zzz_stop',
+      sessionID: 's',
+      questions: [{ question: 'Which color?', header: 'Color', options: [{ label: 'Red' }, { label: 'Blue' }], custom: false }],
+    });
+    await waitFor('.perm-card', (n) => n >= 1);
+    await waitFor('.question-card', (n) => n >= 1);
+    // A stop ends the run with session.idle, and nothing replies to the approval.
+    await event('session.idle', { sessionID: 's' });
+    await waitFor('.perm-card, .question-card', (n) => n === 0);
+  });
+
+  it('a question the model printed as text outlives the end of its turn', async () => {
+    const event = (type: string, properties: Record<string, unknown>) => post({ type: 'event', event: { type, properties } });
+    const blob = JSON.stringify({ questions: [{ question: 'Pick one?', header: 'Pick', options: [{ label: 'A' }, { label: 'B' }], custom: false }] });
+    await post({ type: 'busy', busy: true });
+    await event('message.updated', { info: { id: 'msg_zzz_q', role: 'assistant', time: { created: Date.now() } } });
+    await event('message.part.updated', { part: { id: 'part_zzz_q', messageID: 'msg_zzz_q', sessionID: 's', type: 'text', text: blob } });
+    await waitFor('.question-card', (n) => n === 1);
+    await event('session.idle', { sessionID: 's' });
+    // Checked straight away: the webview handles messages in order, and the
+    // host may reset the chat shortly after (the mode switches above restart it).
+    assert.strictEqual(await count('.question-card'), 1, 'it is answered after its turn, so it stays');
+    await click('.question-card .question-skip');
+  });
 });

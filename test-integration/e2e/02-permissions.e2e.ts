@@ -13,7 +13,7 @@ async function setMode(mode: 'default' | 'strict' | 'bypass'): Promise<void> {
   await sleep(1500); // the engine is recreated with the new rules on the next request
 }
 
-/** Approval cards still waiting for an answer (answered ones stay, marked resolved). */
+/** Approval cards still waiting for an answer (an answered one leaves the chat). */
 const card = () => h.count('.perm-card:not(.resolved)');
 const anyCard = () => h.count('.perm-card');
 
@@ -32,6 +32,7 @@ describe('e2e · permissions', function () {
     await send('Use the read tool to read the .env file in the workspace root and tell me the value of E2E_SECRET.');
     await until(async () => (await card()) > 0, 180_000, 'the approval card');
     await h.click('.perm-card:not(.resolved) .perm-btn.allow-once');
+    assert.strictEqual(await h.count('.perm-card'), 0, 'the answered card leaves the chat');
     await turn();
     assert.match((await h.allText('.msg.assistant .part-text')).join(' '), /do-not-read-me/);
   });
