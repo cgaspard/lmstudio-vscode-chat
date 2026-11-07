@@ -128,6 +128,12 @@ export type HostToWebview =
       lmStudioConnected: boolean;
       /** Set when LM Studio answered 401/403 — reachable, but the request was rejected. */
       lmStudioAuthRequired?: boolean;
+      /**
+       * Set when the server URL failed only because of its scheme (https:// to
+       * LM Studio's plain-http server, or the reverse): `to` is the same URL
+       * with the other scheme, confirmed to answer.
+       */
+      lmStudioSchemeFix?: { from: string; to: string };
       minContext: number;
       /** Fallback effort for models with no per-model choice stored yet. */
       defaultEffort: EffortLevel;

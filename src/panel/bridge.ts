@@ -794,6 +794,11 @@ export class ChatBridge {
       // 'timeout' lands here too: for a user-facing connect attempt a server
       // that won't answer is indistinguishable from one that's gone.
       const authRequired = upstream === 'auth-required';
+      // A hard failure may be nothing but the wrong scheme (https:// typed for
+      // LM Studio, which serves plain http). Name that instead of "can't reach".
+      // The webview applies the fix only while `from` is still the active URL.
+      const schemeTo = upstream === 'unreachable' ? await this.deps.lmStudio.diagnoseScheme() : undefined;
+      const schemeFix = schemeTo ? { from: active.url, to: schemeTo } : undefined;
       // The webview now shows models: [] — resync the periodic diff-guard so
       // the next healthy refresh always posts (a stale healthy snapshot here
       // would suppress it and freeze the picker on "No models found").
@@ -807,6 +812,7 @@ export class ChatBridge {
         serverReady: false,
         lmStudioConnected: false,
         lmStudioAuthRequired: authRequired,
+        lmStudioSchemeFix: schemeFix,
         minContext: cfg.minContextLength,
         defaultEffort: cfg.defaultThinkingEffort,
         permissionMode: cfg.permissionMode,
@@ -816,9 +822,11 @@ export class ChatBridge {
         ? active.hasApiKey
           ? `LM Studio at ${active.url} rejected the stored API key — update it under Servers`
           : `LM Studio at ${active.url} requires an API key — add one under Servers`
-        : `Can't reach LM Studio at ${active.url}`;
+        : schemeFix
+          ? `${active.name} answers at ${schemeFix.to}, not ${active.url}`
+          : `Can't reach LM Studio at ${active.url}`;
       this.post({ type: 'status', text, kind: 'warn' });
-      log(`doInit: upstream ${upstream} for ${active.url}`);
+      log(`doInit: upstream ${upstream} for ${active.url}${schemeFix ? ` (answers at ${schemeFix.to})` : ''}`);
       return 'upstream-down';
     }
 
