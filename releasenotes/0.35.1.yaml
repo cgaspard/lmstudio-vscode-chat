@@ -1,0 +1,10 @@
+version: 0.35.1
+date: 2026-11-07
+highlights:
+  - Fixes 0.35.0, which could not start. Its panel showed "Cannot find module '@silvia-odwyer/photon-node/photon_rs_bg.wasm'" and never answered. If you switched back to 0.34 because of it, this build is safe to try again.
+  - This is a pre-release. If something that worked in 0.34 breaks, please open an issue, and switch back with "Switch to Release Version".
+added: []
+changed: []
+fixed:
+  - The embedded OpenCode engine starts again. OpenCode 2.2.6 loads an image library as it starts, and 0.35.0 shipped without it. The library now ships with the extension, and every build checks that the packaged engine loads by itself before it can be released.
+removed: []
