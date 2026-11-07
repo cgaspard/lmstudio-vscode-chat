@@ -1,0 +1,12 @@
+version: 0.35.0
+date: 2026-11-07
+highlights:
+  - A server saved with the wrong scheme now says so. LM Studio serves plain http, so a server saved as `https://` used to show only "Can't reach LM Studio" while LM Studio was running fine. The banner now names the problem, shows the address that answers, and fixes the server in one click.
+  - The embedded engine moves to OpenCode 2.2.6.
+  - This is a pre-release. If something that worked in 0.34 breaks, please open an issue, and switch back with "Switch to Release Version".
+added:
+  - A "Use http" button on the connection banner when the active server answers only over the other scheme. It keeps the server's name and API key. When the server has a key, the banner warns that the key would then cross your network unencrypted. The reverse case, `http://` saved for a server behind an https-only proxy, offers "Use https".
+changed:
+  - The engine is OpenCode 2.2.6 (`@opencode/sdk`), up from 2.1.4. Reasoning is no longer turned into plain text when you switch models or resume an interrupted reply, MCP servers that are still connecting get a moment to finish before the first prompt, and requests to a server whose host is briefly unreachable are retried.
+fixed: []
+removed: []
