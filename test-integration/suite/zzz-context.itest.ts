@@ -77,6 +77,7 @@ describe('context window e2e (live LM Studio)', function () {
 
   let target: LiveModel;
   let prevDefaultModel: string | undefined;
+  let restore: unknown;
 
   before(async function () {
     this.timeout(360_000);
@@ -94,6 +95,10 @@ describe('context window e2e (live LM Studio)', function () {
         `window) and re-run; this suite asserts the UI matches the loaded window.`,
     );
     target = loaded;
+    // The suite root points everything at a dead server (see index.ts). This
+    // suite opts into the real one, and only now that it knows a model is
+    // already loaded: nothing here loads or reloads a model.
+    restore = await vscode.commands.executeCommand('lmstudioCode._test.useServer', `${restRoot()}/v1`);
 
     const cfg = vscode.workspace.getConfiguration('lmstudioCode');
     prevDefaultModel = cfg.get<string>('defaultModel');
@@ -119,6 +124,9 @@ describe('context window e2e (live LM Studio)', function () {
     await vscode.workspace
       .getConfiguration('lmstudioCode')
       .update('defaultModel', prevDefaultModel, vscode.ConfigurationTarget.Global);
+    if (restore) {
+      await vscode.commands.executeCommand('lmstudioCode._test.restoreServer', restore);
+    }
   });
 
   it('offers context-on-load sizes, and says LM Studio has the final say', async () => {
