@@ -34,7 +34,8 @@ const ROOTS_KEY = 'lmstudioCode.roots';
 
 // Loaded by the SDK at runtime but not bundleable: native addons and wasm. They
 // ship as real packages beside sdk.mjs, at the versions the SDK resolved.
-const NATIVE = ['@parcel/watcher', '@lydell/node-pty', 'web-tree-sitter', 'tree-sitter-bash', 'tree-sitter-powershell'];
+// (2.2 dropped the tree-sitter shell parsers; the bundle no longer imports them.)
+const NATIVE = ['@parcel/watcher', '@lydell/node-pty'];
 // Optional accelerators the SDK falls back without (try/catch around the import).
 const OPTIONAL = ['@ff-labs/fff-node', 'bufferutil', 'utf-8-validate', 'supports-color'];
 
@@ -52,13 +53,27 @@ const TARGETS = {
 };
 
 /**
- * Two source patches, applied to the bundle only (node_modules is untouched).
+ * Source patches, applied to the bundle only (node_modules is untouched).
  * Each throws if the code it targets has changed, so an SDK upgrade fails the
  * build loudly instead of shipping a silent regression.
  */
 const patches = {
   name: 'opencode-embed-patches',
   setup(build) {
+    // The Claude Agent SDK (since 2.2.3) is an optional peer of @opencode/core,
+    // loaded through `import("#claude-agent-sdk")` only for the built-in Claude
+    // Agent provider, which this extension never configures. It cannot simply
+    // be external: that module is `export * from "@anthropic-ai/claude-agent-sdk"`,
+    // and esbuild hoists an external re-export to a static top-level import, so
+    // the whole engine would fail to load without the package. A stub that
+    // throws on import keeps it lazy; upstream catches the failure and reports
+    // "Claude Agent SDK isn't installed".
+    build.onResolve({ filter: /^#claude-agent-sdk$/ }, () => ({ path: 'claude-agent-sdk', namespace: 'oc-stub' }));
+    build.onLoad({ filter: /.*/, namespace: 'oc-stub' }, () => ({
+      contents: 'throw new Error("@anthropic-ai/claude-agent-sdk is not bundled with this extension");',
+      loader: 'js',
+    }));
+
     // global-roots.js reads XDG_* once at module load, and snapshots and shell
     // logs use those constants directly, ignoring the SDK's path options. In a
     // shared extension host we must not touch process.env, so the roots come
