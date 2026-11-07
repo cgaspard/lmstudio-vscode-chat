@@ -22,7 +22,9 @@
 
 const cp = require('node:child_process');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
+const { pathToFileURL } = require('node:url');
 const esbuild = require('esbuild');
 
 const ROOT = path.resolve(__dirname, '..');
@@ -36,6 +38,14 @@ const ROOTS_KEY = 'lmstudioCode.roots';
 // ship as real packages beside sdk.mjs, at the versions the SDK resolved.
 // (2.2 dropped the tree-sitter shell parsers; the bundle no longer imports them.)
 const NATIVE = ['@parcel/watcher', '@lydell/node-pty'];
+// Platform-neutral packages that must also ship as real packages, because they
+// find their own files at runtime and those files cannot be bundled.
+// photon-node (image downscaling): @opencode/core resolves
+// "@silvia-odwyer/photon-node/photon_rs_bg.wasm" with createRequire(). 2.1.4
+// did this lazily. 2.2.6 does it as soon as sdk.mjs loads, so without the
+// package the engine never starts. Inside the package, photon_rs.js reads the
+// wasm from its own __dirname, and an ESM bundle has no __dirname.
+const RUNTIME = ['@silvia-odwyer/photon-node'];
 // Optional accelerators the SDK falls back without (try/catch around the import).
 const OPTIONAL = ['@ff-labs/fff-node', 'bufferutil', 'utf-8-validate', 'supports-color'];
 
@@ -163,15 +173,16 @@ async function main() {
       // CommonJS deps inside the ESM bundle still call require().
       banner: { js: "import { createRequire as __ocCreateRequire } from 'node:module'; const require = __ocCreateRequire(import.meta.url);" },
       plugins: [patches],
-      external: [...NATIVE.flatMap((p) => [p, `${p}/*`, `${p}-*`]), ...OPTIONAL, '*.node'],
+      external: [...NATIVE.flatMap((p) => [p, `${p}/*`, `${p}-*`]), ...RUNTIME.flatMap((p) => [p, `${p}/*`]), ...OPTIONAL, '*.node'],
     });
   } finally {
     fs.rmSync(entry, { force: true });
   }
 
-  // Native modules: install the exact versions the SDK resolved, for the target
-  // platform, into opencode-sdk/node_modules (resolved relative to sdk.mjs).
-  const specs = NATIVE.map((p) => `${p}@${installedVersion(p)}`);
+  // Native and runtime packages: install the exact versions the SDK resolved,
+  // for the target platform, into opencode-sdk/node_modules (resolved relative
+  // to sdk.mjs).
+  const specs = [...NATIVE, ...RUNTIME].map((p) => `${p}@${installedVersion(p)}`);
   fs.writeFileSync(path.join(OUT, 'package.json'), JSON.stringify({ name: 'opencode-sdk-runtime', private: true }, null, 2));
   run(
     'npm',
@@ -197,6 +208,11 @@ async function main() {
       throw new Error(`${pkg}: no native package for ${target} (expected node_modules/${dir})`);
     }
   }
+  for (const pkg of RUNTIME) {
+    if (!fs.existsSync(path.join(OUT, 'node_modules', pkg, 'package.json'))) {
+      throw new Error(`${pkg}: not installed beside sdk.mjs`);
+    }
+  }
   fs.rmSync(path.join(OUT, 'package.json'), { force: true });
 
   fs.writeFileSync(path.join(OUT, 'version'), `${sdkVersion}\n${target}\n`);
@@ -206,8 +222,46 @@ async function main() {
   // npm bookkeeping the runtime never reads.
   fs.rmSync(path.join(OUT, 'node_modules', '.bin'), { recursive: true, force: true });
   fs.rmSync(path.join(OUT, 'node_modules', '.package-lock.json'), { force: true });
+  smokeLoad(target);
   const mb = (p) => (fs.statSync(p).size / 1e6).toFixed(1);
-  console.log(`[build-opencode-sdk] wrote opencode-sdk/sdk.mjs (${mb(path.join(OUT, 'sdk.mjs'))} MB) + ${NATIVE.length} native packages`);
+  console.log(
+    `[build-opencode-sdk] wrote opencode-sdk/sdk.mjs (${mb(path.join(OUT, 'sdk.mjs'))} MB) + ${NATIVE.length} native and ${RUNTIME.length} runtime packages`,
+  );
+}
+
+/**
+ * Import the built engine from a copy outside the repo, as the installed
+ * extension will. Run in place, a package missing from opencode-sdk/node_modules
+ * still resolves from the repo's own node_modules, so the check passes while
+ * the shipped VSIX fails on load. That is how 0.35.0 shipped without
+ * photon-node. Runs only when <target> is the host, because a foreign target's
+ * natives cannot load here (CI's linux-x64 legs cover it).
+ */
+function smokeLoad(target) {
+  if (target !== `${process.platform}-${process.arch}`) {
+    console.log(`[build-opencode-sdk] skipped the load check: ${target} is not this host`);
+    return;
+  }
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'opencode-sdk-smoke-'));
+  try {
+    const copy = path.join(dir, 'opencode-sdk');
+    fs.cpSync(OUT, copy, { recursive: true });
+    const url = pathToFileURL(path.join(copy, 'sdk.mjs')).href;
+    const script =
+      `import(${JSON.stringify(url)}).then((m) => {` +
+      " if (typeof m.OpenCode?.create !== 'function') throw new Error('sdk.mjs does not export OpenCode.create');" +
+      '});';
+    const res = cp.spawnSync(process.execPath, ['--no-warnings', '--input-type=module', '-e', script], {
+      cwd: dir,
+      encoding: 'utf8',
+    });
+    if (res.status !== 0) {
+      throw new Error(`the built engine does not load outside the repo:\n${(res.stderr || res.stdout || '').trim()}`);
+    }
+    console.log('[build-opencode-sdk] load check passed (imported from a copy outside the repo)');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 main().catch((err) => {

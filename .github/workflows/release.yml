@@ -148,6 +148,8 @@ jobs:
               exit 1
             fi
           done
+          # sdk.mjs resolves this wasm on load; without it the engine never starts (0.35.0).
+          unzip -l "$VSIX" | grep -q "extension/opencode-sdk/node_modules/@silvia-odwyer/photon-node/photon_rs_bg.wasm" || { echo "::error::$VSIX is missing @silvia-odwyer/photon-node"; exit 1; }
           unzip -l "$VSIX" | grep -q "extension/opencode-sdk/LICENSE.opencode" || { echo "::error::$VSIX is missing the OpenCode license notice"; exit 1; }
           echo "OK: engine ($SIZE bytes) + ${T} natives + license in $VSIX"
 
